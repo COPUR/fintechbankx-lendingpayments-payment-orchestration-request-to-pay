@@ -1,0 +1,7 @@
+bounded_context: "payments"
+service_id: "svc-pay-request-to-pay"
+application_id: "app.pay.request-to-pay"
+data_owner_pattern: "db_pay_request_to_pay_prod"
+event_namespace: "evt.pay.rtp"
+owning_squad: "Recurring and Bulk Payments Squad"
+wave: "3"

@@ -1,0 +1,161 @@
+openapi: 3.0.3
+info:
+  title: Request to Pay Service API
+  version: 0.1.0
+  description: API for creating and processing request-to-pay flows.
+servers:
+  - url: https://api.example.com/open-finance/v1
+paths:
+  /par:
+    post:
+      summary: Create request to pay
+      operationId: createRequestToPay
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/JwsSignature'
+        - $ref: '#/components/parameters/Dpop'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRequestToPay'
+      responses:
+        '201':
+          description: Request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestToPayResponse'
+  /par/{requestId}:
+    get:
+      summary: Get request to pay status
+      operationId: getRequestToPay
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionId'
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Request status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestToPayResponse'
+  /par/{requestId}/accept:
+    post:
+      summary: Accept request to pay
+      operationId: acceptRequestToPay
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/JwsSignature'
+        - $ref: '#/components/parameters/Dpop'
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Request accepted and payment initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestToPayResponse'
+  /par/{requestId}/reject:
+    post:
+      summary: Reject request to pay
+      operationId: rejectRequestToPay
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/JwsSignature'
+        - $ref: '#/components/parameters/Dpop'
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Request rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestToPayResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    InteractionId:
+      name: x-fapi-interaction-id
+      in: header
+      required: true
+      schema:
+        type: string
+    IdempotencyKey:
+      name: x-idempotency-key
+      in: header
+      required: true
+      schema:
+        type: string
+    JwsSignature:
+      name: x-jws-signature
+      in: header
+      required: true
+      schema:
+        type: string
+    Dpop:
+      name: DPoP
+      in: header
+      required: true
+      schema:
+        type: string
+  schemas:
+    CreateRequestToPay:
+      type: object
+      required: [Data]
+      properties:
+        Data:
+          type: object
+          required: [CreditorName, DebtorIdentifier, Amount, Currency]
+          properties:
+            CreditorName:
+              type: string
+            DebtorIdentifier:
+              type: string
+            Amount:
+              type: string
+            Currency:
+              type: string
+            DueDate:
+              type: string
+              format: date
+    RequestToPayResponse:
+      type: object
+      properties:
+        Data:
+          type: object
+          properties:
+            RequestId:
+              type: string
+            Status:
+              type: string
+            PaymentId:
+              type: string

@@ -1,1 +1,5 @@
 rootProject.name = 'fintechbankx-payments-request-to-pay-service'
+
+include 'open-finance-domain'
+include 'open-finance-application'
+include 'open-finance-infrastructure'

@@ -68,6 +68,14 @@ class PayRequestTest {
                 .hasMessageContaining("consentId");
     }
 
+    @Test
+    void shouldValidateOwnershipByTpp() {
+        PayRequest request = baseRequest();
+
+        assertThat(request.belongsTo("TPP-001")).isTrue();
+        assertThat(request.belongsTo("TPP-XYZ")).isFalse();
+    }
+
     private static PayRequest baseRequest() {
         return new PayRequest(
                 "CONS-001",

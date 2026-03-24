@@ -2,8 +2,8 @@
 
 ## Repository
 
-- Name: \
-- Generated: \
+- Name: fintechbankx-lendingpayments-payment-orchestration-request-to-pay
+- Generated: 2026-03-24
 
 ## Objective
 

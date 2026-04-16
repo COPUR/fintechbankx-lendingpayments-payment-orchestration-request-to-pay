@@ -14,7 +14,8 @@
                 <springAppName/>
                 <threadName/>
                 <loggerName/>
-                <message/>
+                <!-- Custom PII Masking Provider -->
+                <provider class="com.enterprise.openfinance.requesttopay.infrastructure.logging.PiiMaskingJsonProvider"/>
                 <stackTrace/>
                 <mdc/> <!-- MDC for traceId, spanId, etc. -->
             </providers>

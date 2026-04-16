@@ -2,12 +2,14 @@ package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
+import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationException;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice(basePackages = "com.enterprise.openfinance.requesttopay.infrastructure.rest")
 public class PayRequestExceptionHandler {
@@ -26,11 +28,29 @@ public class PayRequestExceptionHandler {
                 .body(PayRequestErrorResponse.of("REQUEST_FINALIZED", exception.getMessage(), interactionId(request)));
     }
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<PayRequestErrorResponse> handleInvalidRequest(IllegalArgumentException exception,
+    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
+    public ResponseEntity<PayRequestErrorResponse> handleInvalidRequest(RuntimeException exception,
                                                                         HttpServletRequest request) {
         return ResponseEntity.badRequest()
                 .body(PayRequestErrorResponse.of("INVALID_REQUEST", exception.getMessage(), interactionId(request)));
+    }
+
+    @ExceptionHandler(DPoPValidationException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleDPoPValidation(DPoPValidationException exception,
+                                                                        HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(PayRequestErrorResponse.of("DPOP_VALIDATION_FAILED", exception.getMessage(), interactionId(request)));
+    }
+
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleResponseStatusException(ResponseStatusException exception,
+                                                                                 HttpServletRequest request) {
+        return ResponseEntity.status(exception.getStatusCode())
+                .body(PayRequestErrorResponse.of(
+                        exception.getStatusCode().name(),
+                        exception.getReason() != null ? exception.getReason() : "An error occurred",
+                        interactionId(request)
+                ));
     }
 
     @ExceptionHandler(Exception.class)

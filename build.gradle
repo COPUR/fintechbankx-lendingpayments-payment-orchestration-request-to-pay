@@ -28,6 +28,9 @@ subprojects {
         imports {
             mavenBom 'org.springframework.boot:spring-boot-dependencies:3.3.6'
         }
+        dependencies {
+            dependency 'com.nimbusds:nimbus-jose-jwt:9.47'
+        }
     }
 
     dependencies {

@@ -19,7 +19,7 @@ public class InMemoryPayRequestRepositoryAdapter implements PayRequestRepository
     }
 
     @Override
-    public Optional<PayRequest> findById(String consentId) {
+    public Optional<PayRequest> findByConsentId(String consentId) {
         return Optional.ofNullable(store.get(consentId));
     }
 }

@@ -45,9 +45,13 @@ public class PayRequestExceptionHandler {
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<PayRequestErrorResponse> handleResponseStatusException(ResponseStatusException exception,
                                                                                  HttpServletRequest request) {
+        // Resolve the HttpStatusCode to an HttpStatus enum if possible
+        HttpStatus status = HttpStatus.resolve(exception.getStatusCode().value());
+        String statusName = status != null ? status.name() : "UNKNOWN_STATUS";
+        
         return ResponseEntity.status(exception.getStatusCode())
                 .body(PayRequestErrorResponse.of(
-                        exception.getStatusCode().name(),
+                        statusName,
                         exception.getReason() != null ? exception.getReason() : "An error occurred",
                         interactionId(request)
                 ));

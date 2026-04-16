@@ -66,7 +66,7 @@ public class PayRequestController {
     public ResponseEntity<PayRequestStatusResponse> getPayRequestStatus(
             @RequestHeader("X-FAPI-Interaction-ID") @NotBlank String interactionId,
             @RequestHeader(value = "x-fapi-financial-id", required = false) String financialId,
-            @PathVariable @NotBlank String consentId,
+            @PathVariable("consentId") @NotBlank String consentId,
             @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch
     ) {
         String tppId = resolveTppId(financialId);
@@ -98,7 +98,7 @@ public class PayRequestController {
     public ResponseEntity<PayRequestStatusResponse> acceptPayRequest(
             @RequestHeader("X-FAPI-Interaction-ID") @NotBlank String interactionId,
             @RequestHeader(value = "x-fapi-financial-id", required = false) String financialId,
-            @PathVariable @NotBlank String consentId,
+            @PathVariable("consentId") @NotBlank String consentId,
             @RequestBody PayRequestDecisionRequest decision
     ) {
         String tppId = resolveTppId(financialId);
@@ -119,7 +119,7 @@ public class PayRequestController {
     public ResponseEntity<PayRequestStatusResponse> rejectPayRequest(
             @RequestHeader("X-FAPI-Interaction-ID") @NotBlank String interactionId,
             @RequestHeader(value = "x-fapi-financial-id", required = false) String financialId,
-            @PathVariable @NotBlank String consentId,
+            @PathVariable("consentId") @NotBlank String consentId,
             @RequestBody PayRequestDecisionRequest decision
     ) {
         String tppId = resolveTppId(financialId);

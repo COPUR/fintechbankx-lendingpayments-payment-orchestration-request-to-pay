@@ -6,6 +6,9 @@ import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Before;
 import org.aspectj.lang.annotation.Pointcut;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.stereotype.Component;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -14,6 +17,7 @@ import org.springframework.http.HttpStatus;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Map;
 import java.util.Optional;
 
 @Aspect
@@ -53,9 +57,32 @@ public class DPoPSecurityAspect {
 
         try {
             JWK dpopJwk = dpopValidationService.validateDPoPProof(dpopHeader, httpMethod, requestUri);
+            validateAccessTokenBinding(dpopJwk);
             request.setAttribute(DPOP_JWK_REQUEST_ATTRIBUTE, dpopJwk);
         } catch (DPoPValidationException e) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, e.getMessage(), e);
+        }
+    }
+
+    private static void validateAccessTokenBinding(JWK dpopJwk) {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (!(authentication instanceof JwtAuthenticationToken jwtAuthenticationToken)) {
+            return;
+        }
+
+        Map<String, Object> cnfClaim = jwtAuthenticationToken.getToken().getClaim("cnf");
+        String accessTokenJkt = cnfClaim != null ? (String) cnfClaim.get("jkt") : null;
+        if (accessTokenJkt == null || accessTokenJkt.isBlank()) {
+            throw new DPoPValidationException("Access token 'cnf' claim with 'jkt' is missing");
+        }
+
+        try {
+            String dpopJkt = dpopJwk.computeThumbprint("SHA-256").toString();
+            if (!dpopJkt.equals(accessTokenJkt)) {
+                throw new DPoPValidationException("DPoP JWK thumbprint does not match access token 'cnf' claim");
+            }
+        } catch (Exception exception) {
+            throw new DPoPValidationException("Failed to compute DPoP JWK thumbprint", exception);
         }
     }
 }

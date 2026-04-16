@@ -5,6 +5,7 @@ import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestStatus;
 import com.enterprise.openfinance.requesttopay.domain.port.in.PayRequestUseCase;
 import com.enterprise.openfinance.requesttopay.domain.query.GetPayRequestStatusQuery;
+import com.enterprise.openfinance.requesttopay.infrastructure.cache.IdempotencyKeyRepository;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestDecisionRequest;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestRequest;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestResponse;
@@ -20,27 +21,26 @@ import java.math.BigDecimal;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verify;
 
 @Tag("unit")
 class PayRequestControllerUnitTest {
 
+    private final PayRequestUseCase useCase = Mockito.mock(PayRequestUseCase.class);
+    private final IdempotencyKeyRepository idempotencyKeyRepository = Mockito.mock(IdempotencyKeyRepository.class);
+    private final PayRequestController controller = new PayRequestController(useCase, idempotencyKeyRepository);
+
     @Test
     void shouldCreateAndReturnPayRequest() {
-        PayRequestUseCase useCase = Mockito.mock(PayRequestUseCase.class);
-        PayRequestController controller = new PayRequestController(useCase);
-
         PayRequest request = sampleRequest(PayRequestStatus.AWAITING_AUTHORISATION, null);
         Mockito.when(useCase.createPayRequest(Mockito.any()))
                 .thenReturn(new PayRequestResult(request, false));
-        Mockito.when(useCase.getPayRequestStatus(Mockito.any()))
-                .thenReturn(new PayRequestResult(request, false));
+        Mockito.when(idempotencyKeyRepository.saveIfAbsent(Mockito.anyString(), Mockito.anyString(), Mockito.anyLong()))
+                .thenReturn(true);
 
-        ResponseEntity<PayRequestResponse> created = controller.createPayRequest(
-                "DPoP token",
-                "proof",
+        ResponseEntity<?> created = controller.createPayRequest(
                 "ix-request-to-pay-1",
+                "idemp-key-1",
                 "TPP-001",
                 new PayRequestRequest(new PayRequestRequest.Data(
                         "PSU-001",
@@ -49,32 +49,17 @@ class PayRequestControllerUnitTest {
                 ))
         );
 
-        ResponseEntity<PayRequestStatusResponse> status = controller.getPayRequestStatus(
-                "DPoP token",
-                "proof",
-                "ix-request-to-pay-1",
-                "TPP-001",
-                "CONS-001",
-                null
-        );
-
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(created.getHeaders().getFirst("X-OF-Cache")).isEqualTo("MISS");
-        assertThat(status.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
     @Test
     void shouldReturnNotModifiedWhenEtagMatches() {
-        PayRequestUseCase useCase = Mockito.mock(PayRequestUseCase.class);
-        PayRequestController controller = new PayRequestController(useCase);
-
         PayRequest request = sampleRequest(PayRequestStatus.AWAITING_AUTHORISATION, null);
         Mockito.when(useCase.getPayRequestStatus(Mockito.any()))
                 .thenReturn(new PayRequestResult(request, false));
 
         ResponseEntity<PayRequestStatusResponse> first = controller.getPayRequestStatus(
-                "DPoP token",
-                "proof",
                 "ix-request-to-pay-1",
                 "TPP-001",
                 "CONS-001",
@@ -82,8 +67,6 @@ class PayRequestControllerUnitTest {
         );
 
         ResponseEntity<PayRequestStatusResponse> second = controller.getPayRequestStatus(
-                "DPoP token",
-                "proof",
                 "ix-request-to-pay-1",
                 "TPP-001",
                 "CONS-001",
@@ -95,16 +78,11 @@ class PayRequestControllerUnitTest {
 
     @Test
     void shouldAcceptAndRejectPayRequest() {
-        PayRequestUseCase useCase = Mockito.mock(PayRequestUseCase.class);
-        PayRequestController controller = new PayRequestController(useCase);
-
         PayRequest consumed = sampleRequest(PayRequestStatus.CONSUMED, "PAY-123");
         Mockito.when(useCase.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", "ix-request-to-pay-2"))
                 .thenReturn(new PayRequestResult(consumed, false));
 
         ResponseEntity<PayRequestStatusResponse> accept = controller.acceptPayRequest(
-                "DPoP token",
-                "proof",
                 "ix-request-to-pay-2",
                 "TPP-001",
                 "CONS-001",
@@ -120,8 +98,6 @@ class PayRequestControllerUnitTest {
                 .thenReturn(new PayRequestResult(rejected, false));
 
         ResponseEntity<PayRequestStatusResponse> reject = controller.rejectPayRequest(
-                "DPoP token",
-                "proof",
                 "ix-request-to-pay-3",
                 "TPP-001",
                 "CONS-001",
@@ -135,16 +111,11 @@ class PayRequestControllerUnitTest {
 
     @Test
     void shouldUseUnknownTppWhenFinancialIdMissing() {
-        PayRequestUseCase useCase = Mockito.mock(PayRequestUseCase.class);
-        PayRequestController controller = new PayRequestController(useCase);
-
         PayRequest request = sampleRequest(PayRequestStatus.AWAITING_AUTHORISATION, null);
         Mockito.when(useCase.getPayRequestStatus(Mockito.any()))
                 .thenReturn(new PayRequestResult(request, false));
 
         controller.getPayRequestStatus(
-                "DPoP token",
-                "proof",
                 "ix-request-to-pay-4",
                 null,
                 "CONS-001",
@@ -154,26 +125,6 @@ class PayRequestControllerUnitTest {
         ArgumentCaptor<GetPayRequestStatusQuery> captor = ArgumentCaptor.forClass(GetPayRequestStatusQuery.class);
         verify(useCase).getPayRequestStatus(captor.capture());
         assertThat(captor.getValue().tppId()).isEqualTo("UNKNOWN_TPP");
-    }
-
-    @Test
-    void shouldRejectInvalidAuthorization() {
-        PayRequestUseCase useCase = Mockito.mock(PayRequestUseCase.class);
-        PayRequestController controller = new PayRequestController(useCase);
-
-        assertThatThrownBy(() -> controller.createPayRequest(
-                "Basic invalid",
-                "proof",
-                "ix-request-to-pay-1",
-                "TPP-001",
-                new PayRequestRequest(new PayRequestRequest.Data(
-                        "PSU-001",
-                        "Utilities Co",
-                        new PayRequestRequest.Amount("500.00", "AED")
-                ))
-        ))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Bearer or DPoP");
     }
 
     private static PayRequest sampleRequest(PayRequestStatus status, String paymentId) {

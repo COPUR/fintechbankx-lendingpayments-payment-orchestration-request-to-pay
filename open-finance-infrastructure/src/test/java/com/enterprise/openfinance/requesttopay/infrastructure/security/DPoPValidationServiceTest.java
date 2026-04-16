@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.security;
 
+import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
 import com.nimbusds.jose.JWSHeader;
 import com.nimbusds.jose.crypto.ECDSASigner;
@@ -43,7 +44,7 @@ class DPoPValidationServiceTest {
 
     private String createDPoPProof(HttpMethod method, URI uri, String jti, Instant iat) throws Exception {
         JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.ES256)
-                .type(DPoPValidationService.DPOP_JWT_TYPE)
+                .type(new JOSEObjectType(DPoPValidationService.DPOP_JWT_TYPE))
                 .jwk(ecKey.toPublicJWK())
                 .build();
 

@@ -74,14 +74,14 @@ class PayRequestServiceTest {
         PayRequestResult result = service.getPayRequestStatus(new GetPayRequestStatusQuery("CONS-001", "TPP-001", "ix"));
 
         assertThat(result.cacheHit()).isTrue();
-        verify(repositoryPort, never()).findById("CONS-001");
+        verify(repositoryPort, never()).findByConsentId("CONS-001");
     }
 
     @Test
     void shouldReadAndCacheOnMiss() {
         PayRequest request = baseRequest();
         when(cachePort.getStatus(any(), any())).thenReturn(Optional.empty());
-        when(repositoryPort.findById("CONS-001")).thenReturn(Optional.of(request));
+        when(repositoryPort.findByConsentId("CONS-001")).thenReturn(Optional.of(request));
 
         PayRequestResult result = service.getPayRequestStatus(new GetPayRequestStatusQuery("CONS-001", "TPP-001", "ix"));
 
@@ -96,7 +96,7 @@ class PayRequestServiceTest {
     @Test
     void shouldRejectPayRequestNotFound() {
         when(cachePort.getStatus(any(), any())).thenReturn(Optional.empty());
-        when(repositoryPort.findById("CONS-404")).thenReturn(Optional.empty());
+        when(repositoryPort.findByConsentId("CONS-404")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getPayRequestStatus(new GetPayRequestStatusQuery("CONS-404", "TPP-001", "ix")))
                 .isInstanceOf(ResourceNotFoundException.class)
@@ -106,7 +106,7 @@ class PayRequestServiceTest {
     @Test
     void shouldRejectDuplicateFinalize() {
         PayRequest request = baseRequest().consume("PAY-001", Instant.parse("2026-02-10T11:00:00Z"));
-        when(repositoryPort.findById("CONS-001")).thenReturn(Optional.of(request));
+        when(repositoryPort.findByConsentId("CONS-001")).thenReturn(Optional.of(request));
 
         assertThatThrownBy(() -> service.rejectPayRequest("CONS-001", "TPP-001", "ix"))
                 .isInstanceOf(PayRequestFinalizedException.class)
@@ -116,7 +116,7 @@ class PayRequestServiceTest {
     @Test
     void shouldRejectWrongOwner() {
         PayRequest request = baseRequest();
-        when(repositoryPort.findById("CONS-001")).thenReturn(Optional.of(request));
+        when(repositoryPort.findByConsentId("CONS-001")).thenReturn(Optional.of(request));
 
         assertThatThrownBy(() -> service.getPayRequestStatus(new GetPayRequestStatusQuery("CONS-001", "TPP-XYZ", "ix")))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -126,7 +126,7 @@ class PayRequestServiceTest {
     @Test
     void shouldConsumePayRequest() {
         PayRequest request = baseRequest();
-        when(repositoryPort.findById("CONS-001")).thenReturn(Optional.of(request));
+        when(repositoryPort.findByConsentId("CONS-001")).thenReturn(Optional.of(request));
         when(repositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         PayRequestResult result = service.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", "ix");

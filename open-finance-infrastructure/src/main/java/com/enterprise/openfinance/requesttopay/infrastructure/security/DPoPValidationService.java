@@ -1,17 +1,13 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.security;
 
 import com.nimbusds.jose.*;
+import com.nimbusds.jose.crypto.ECDSAVerifier;
+import com.nimbusds.jose.crypto.RSASSAVerifier;
 import com.nimbusds.jose.jwk.JWK;
-import com.nimbusds.jose.jwk.JWKSet;
-import com.nimbusds.jose.jwk.source.ImmutableJWKSet;
-import com.nimbusds.jose.proc.BadJOSEException;
-import com.nimbusds.jose.proc.JWSKeySelector;
-import com.nimbusds.jose.proc.JWSVerificationKeySelector;
-import com.nimbusds.jose.proc.SecurityContext;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.RSAKey;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.SignedJWT;
-import com.nimbusds.jwt.proc.ConfigurableJWTProcessor;
-import com.nimbusds.jwt.proc.DefaultJWTProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpMethod;
@@ -65,13 +61,18 @@ public class DPoPValidationService {
         // 2. Verify DPoP JWT signature
         JWK jwk = header.getJWK();
         try {
-            JWKSet jwkSet = new JWKSet(jwk);
-            JWSKeySelector<SecurityContext> keySelector = new JWSVerificationKeySelector<>(header.getAlgorithm(), new ImmutableJWKSet<>(jwkSet));
-
-            ConfigurableJWTProcessor<SecurityContext> jwtProcessor = new DefaultJWTProcessor<>();
-            jwtProcessor.setJWSKeySelector(keySelector);
-            jwtProcessor.process(signedJWT, null); // Signature verification
-        } catch (JOSEException | BadJOSEException e) {
+            JWSVerifier verifier;
+            if (jwk instanceof ECKey ecKey) {
+                verifier = new ECDSAVerifier(ecKey);
+            } else if (jwk instanceof RSAKey rsaKey) {
+                verifier = new RSASSAVerifier(rsaKey);
+            } else {
+                throw new DPoPValidationException("Unsupported DPoP JWT JWK type: " + jwk.getKeyType());
+            }
+            if (!signedJWT.verify(verifier)) {
+                throw new DPoPValidationException("DPoP JWT signature verification failed");
+            }
+        } catch (JOSEException e) {
             throw new DPoPValidationException("DPoP JWT signature verification failed", e);
         }
 
@@ -92,16 +93,20 @@ public class DPoPValidationService {
             throw new DPoPValidationException("DPoP JWT 'jti' replay detected");
         }
 
-        // Check 'htm' (HTTP method)
-        String htm = claims.getStringClaim("htm");
-        if (htm == null || !htm.equalsIgnoreCase(httpMethod.name())) {
-            throw new DPoPValidationException("DPoP JWT 'htm' claim mismatch. Expected " + httpMethod.name() + ", got " + htm);
-        }
+        try {
+            // Check 'htm' (HTTP method)
+            String htm = claims.getStringClaim("htm");
+            if (htm == null || !htm.equalsIgnoreCase(httpMethod.name())) {
+                throw new DPoPValidationException("DPoP JWT 'htm' claim mismatch. Expected " + httpMethod.name() + ", got " + htm);
+            }
 
-        // Check 'htu' (HTTP URI)
-        String htu = claims.getStringClaim("htu");
-        if (htu == null || !htu.equals(requestUri.toString())) {
-            throw new DPoPValidationException("DPoP JWT 'htu' claim mismatch. Expected " + requestUri.toString() + ", got " + htu);
+            // Check 'htu' (HTTP URI)
+            String htu = claims.getStringClaim("htu");
+            if (htu == null || !htu.equals(requestUri.toString())) {
+                throw new DPoPValidationException("DPoP JWT 'htu' claim mismatch. Expected " + requestUri.toString() + ", got " + htu);
+            }
+        } catch (ParseException e) {
+            throw new DPoPValidationException("Failed to parse DPoP claims", e);
         }
 
         // Check 'iat' (Issued At)

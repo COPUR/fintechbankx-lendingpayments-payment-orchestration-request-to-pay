@@ -6,6 +6,7 @@ import org.springframework.security.oauth2.core.OAuth2TokenValidatorResult;
 import org.springframework.security.oauth2.jwt.Jwt;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -23,11 +24,12 @@ class AudienceValidatorTest {
 
     private Jwt createJwt(List<String> audience) {
         Map<String, Object> headers = Map.of("alg", "none");
-        Map<String, Object> claims = Map.of(
-                "sub", "user-123",
-                "aud", audience,
-                "iat", Instant.now().getEpochSecond()
-        );
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("sub", "user-123");
+        claims.put("iat", Instant.now().getEpochSecond());
+        if (audience != null) {
+            claims.put("aud", audience);
+        }
         return new Jwt("token-value", Instant.now(), Instant.now().plusSeconds(3600), headers, claims);
     }
 

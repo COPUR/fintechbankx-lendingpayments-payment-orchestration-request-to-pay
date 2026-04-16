@@ -79,7 +79,7 @@ public class PayRequestService implements PayRequestUseCase {
             return cached.orElseThrow().withCacheHit(true);
         }
 
-        PayRequest request = repositoryPort.findById(query.consentId())
+        PayRequest request = repositoryPort.findByConsentId(query.consentId())
                 .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
 
         ensureOwnership(request, query.tppId());
@@ -92,7 +92,7 @@ public class PayRequestService implements PayRequestUseCase {
     @Override
     @Transactional
     public PayRequestResult acceptPayRequest(String consentId, String tppId, String paymentId, String interactionId) {
-        PayRequest request = repositoryPort.findById(consentId)
+        PayRequest request = repositoryPort.findByConsentId(consentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
         ensureOwnership(request, tppId);
         if (request.isFinalized()) {
@@ -107,7 +107,7 @@ public class PayRequestService implements PayRequestUseCase {
     @Override
     @Transactional
     public PayRequestResult rejectPayRequest(String consentId, String tppId, String interactionId) {
-        PayRequest request = repositoryPort.findById(consentId)
+        PayRequest request = repositoryPort.findByConsentId(consentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
         ensureOwnership(request, tppId);
         if (request.isFinalized()) {

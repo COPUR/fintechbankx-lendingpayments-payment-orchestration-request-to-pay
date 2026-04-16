@@ -31,6 +31,6 @@ class InMemoryPayRequestRepositoryAdapterTest {
 
         adapter.save(request);
 
-        assertThat(adapter.findById("CONS-001")).contains(request);
+        assertThat(adapter.findByConsentId("CONS-001")).contains(request);
     }
 }

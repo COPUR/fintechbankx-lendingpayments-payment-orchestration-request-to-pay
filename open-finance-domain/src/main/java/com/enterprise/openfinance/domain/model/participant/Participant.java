@@ -2,20 +2,20 @@ package com.enterprise.openfinance.domain.model.participant;
 
 import com.enterprise.openfinance.domain.event.ParticipantDeactivatedEvent;
 import com.enterprise.openfinance.domain.event.ParticipantOnboardedEvent;
-import com.bank.shared.kernel.domain.Entity;
+import com.enterprise.shared.domain.Entity;
 import lombok.Builder;
 import lombok.Getter;
 
 import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Participant entity representing an Open Finance ecosystem participant registered with CBUAE.
  * Can be a bank, fintech, or other financial institution authorized to participate in data sharing.
  */
 @Getter
-@Entity
 public class Participant extends Entity<ParticipantId> {
 
     private final ParticipantId id;
@@ -84,7 +84,7 @@ public class Participant extends Entity<ParticipantId> {
     public Set<ParticipantCertificate> getActiveCertificates() {
         return certificates.stream()
                 .filter(ParticipantCertificate::isActive)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
     }
 
     /**

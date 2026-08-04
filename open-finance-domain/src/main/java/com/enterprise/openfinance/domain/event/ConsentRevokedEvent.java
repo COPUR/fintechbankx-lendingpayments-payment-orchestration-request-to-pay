@@ -3,12 +3,12 @@ package com.enterprise.openfinance.domain.event;
 import com.enterprise.openfinance.domain.model.consent.ConsentId;
 import com.enterprise.openfinance.domain.model.participant.ParticipantId;
 import com.enterprise.shared.domain.CustomerId;
+import com.enterprise.shared.domain.event.DomainEvent;
 import lombok.Builder;
 import lombok.Data;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.UUID;
 
 @Data
 @Builder
@@ -16,11 +16,16 @@ public class ConsentRevokedEvent implements DomainEvent {
     private final ConsentId consentId;
     private final CustomerId customerId;
     private final ParticipantId participantId;
-    private final String revocationReason;
-    private final Instant occurredAt;
-    private final String correlationId;
-    private final String causationId;
-    private final Long version;
+    private final LocalDateTime revokedAt;
+    private final String reason;
+
+    public ConsentRevokedEvent(ConsentId consentId, CustomerId customerId, ParticipantId participantId, LocalDateTime revokedAt, String reason) {
+        this.consentId = consentId;
+        this.customerId = customerId;
+        this.participantId = participantId;
+        this.revokedAt = revokedAt;
+        this.reason = reason;
+    }
 
     @Override
     public String getAggregateId() {
@@ -36,17 +41,10 @@ public class ConsentRevokedEvent implements DomainEvent {
     public Map<String, Object> getData() {
         return Map.of(
             "consentId", consentId.getValue(),
-            "customerId", customerId.getValue(),
-            "participantId", participantId.getValue(),
-            "revocationReason", revocationReason,
-            "revokedAt", occurredAt
+            "customerId", customerId.value(),
+            "participantId", participantId.value(),
+            "revokedAt", revokedAt,
+            "reason", reason
         );
-    }
-
-    public static ConsentRevokedEventBuilder builder() {
-        return new ConsentRevokedEventBuilder()
-            .correlationId(UUID.randomUUID().toString())
-            .causationId(UUID.randomUUID().toString())
-            .version(1L);
     }
 }

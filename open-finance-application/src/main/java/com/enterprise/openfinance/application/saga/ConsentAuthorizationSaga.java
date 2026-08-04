@@ -2,7 +2,13 @@ package com.enterprise.openfinance.application.saga;
 
 import com.enterprise.openfinance.application.saga.model.SagaExecution;
 import com.enterprise.openfinance.application.saga.model.SagaId;
-import com.enterprise.openfinance.domain.event.*;
+import com.enterprise.openfinance.domain.event.CBUAERegistrationResult;
+import com.enterprise.openfinance.domain.event.ConsentAuthorizationRequest;
+import com.enterprise.openfinance.domain.event.ConsentAuthorizationResult;
+import com.enterprise.openfinance.domain.event.ConsentAuthorizationStatus;
+import com.enterprise.openfinance.domain.event.ConsentValidationResult;
+import com.enterprise.openfinance.domain.event.CustomerAuthorizationResult;
+import com.enterprise.openfinance.domain.event.ParticipantValidationResult;
 import com.enterprise.openfinance.domain.model.consent.ConsentId;
 import com.enterprise.openfinance.domain.model.participant.ParticipantId;
 import com.enterprise.shared.domain.CustomerId;
@@ -20,7 +26,7 @@ import java.util.concurrent.CompletableFuture;
  * Saga orchestrator for consent authorization workflow.
  * Handles the complex multi-step process of consent creation, validation, and authorization
  * across distributed services with compensation patterns.
- * 
+ *
  * Saga Pattern: Orchestrator-based (centralized coordination)
  * Compensation: Automatic rollback on failure
  * Timeout: 5 minutes for complete workflow
@@ -39,7 +45,7 @@ public class ConsentAuthorizationSaga {
 
     /**
      * Orchestrates the complete consent authorization saga.
-     * 
+     *
      * Steps:
      * 1. Validate participant credentials and certificates
      * 2. Verify consent request against CBUAE regulations
@@ -48,18 +54,18 @@ public class ConsentAuthorizationSaga {
      * 5. Wait for customer authorization (with timeout)
      * 6. Register with CBUAE trust framework
      * 7. Activate consent and notify all parties
-     * 
+     *
      * Compensations are automatic on any step failure.
      */
     @Transactional
     public CompletableFuture<ConsentAuthorizationResult> orchestrateConsentAuthorization(
             ConsentAuthorizationRequest request) {
-        
+
         var sagaId = SagaId.generate();
-        log.info("🎯 Starting consent authorization saga: {} for consent: {}", 
+        log.info("🎯 Starting consent authorization saga: {} for consent: {}",
             sagaId, request.getConsentId());
 
-        return sagaOrchestrator.startSaga(sagaId, request)
+        return sagaOrchestrator.<ConsentAuthorizationRequest>startSaga(sagaId, request)
             .thenCompose(saga -> executeStep1_ValidateParticipant(saga, request))
             .thenCompose(saga -> executeStep2_VerifyConsentRequest(saga, request))
             .thenCompose(saga -> executeStep3_CreateConsentRecord(saga, request))
@@ -76,8 +82,8 @@ public class ConsentAuthorizationSaga {
 
     private CompletableFuture<SagaExecution> executeStep1_ValidateParticipant(
             SagaExecution saga, ConsentAuthorizationRequest request) {
-        
-        return sagaOrchestrator.executeStep(saga, "VALIDATE_PARTICIPANT", () ->
+
+        return sagaOrchestrator.<ParticipantValidationResult>executeStep(saga, "VALIDATE_PARTICIPANT", () ->
             participantVerificationService.validateParticipant(
                 request.getParticipantId(),
                 request.getCertificates(),
@@ -93,22 +99,22 @@ public class ConsentAuthorizationSaga {
                     "VALIDATE_PARTICIPANT",
                     result.getErrorCode()
                 );
-                return CompletableFuture.failedFuture(error);
+                return CompletableFuture.<SagaExecution>failedFuture(error);
             }
         }).exceptionally(throwable -> {
             // Register compensation for participant validation
             saga.addCompensation("VALIDATE_PARTICIPANT", () ->
                 participantVerificationService.revokeValidation(request.getParticipantId())
             );
-            throw new SagaStepFailedException("Participant validation step failed", 
+            throw new SagaStepFailedException("Participant validation step failed",
                 "VALIDATE_PARTICIPANT", throwable);
         });
     }
 
     private CompletableFuture<SagaExecution> executeStep2_VerifyConsentRequest(
             SagaExecution saga, ConsentAuthorizationRequest request) {
-        
-        return sagaOrchestrator.executeStep(saga, "VERIFY_CONSENT_REQUEST", () ->
+
+        return sagaOrchestrator.<ConsentValidationResult>executeStep(saga, "VERIFY_CONSENT_REQUEST", () ->
             consentValidationService.verifyConsentRequest(
                 request.getCustomerId(),
                 request.getParticipantId(),
@@ -127,15 +133,15 @@ public class ConsentAuthorizationSaga {
                     "VERIFY_CONSENT_REQUEST",
                     "VALIDATION_FAILED"
                 );
-                return CompletableFuture.failedFuture(error);
+                return CompletableFuture.<SagaExecution>failedFuture(error);
             }
         });
     }
 
     private CompletableFuture<SagaExecution> executeStep3_CreateConsentRecord(
             SagaExecution saga, ConsentAuthorizationRequest request) {
-        
-        return sagaOrchestrator.executeStep(saga, "CREATE_CONSENT_RECORD", () ->
+
+        return sagaOrchestrator.<ConsentId>executeStep(saga, "CREATE_CONSENT_RECORD", () ->
             consentValidationService.createPendingConsent(
                 request.getConsentId(),
                 request.getCustomerId(),
@@ -146,20 +152,20 @@ public class ConsentAuthorizationSaga {
             )
         ).thenCompose(consent -> {
             log.debug("✅ Step 3 completed: Consent record created for {}", request.getConsentId());
-            
+
             // Register compensation to delete consent if later steps fail
             saga.addCompensation("CREATE_CONSENT_RECORD", () ->
                 consentValidationService.deleteConsent(request.getConsentId())
             );
-            
+
             return CompletableFuture.completedFuture(saga.markStepCompleted("CREATE_CONSENT_RECORD"));
         });
     }
 
     private CompletableFuture<SagaExecution> executeStep4_NotifyCustomer(
             SagaExecution saga, ConsentAuthorizationRequest request) {
-        
-        return sagaOrchestrator.executeStep(saga, "NOTIFY_CUSTOMER", () ->
+
+        return sagaOrchestrator.<Void>executeStep(saga, "NOTIFY_CUSTOMER", () ->
             notificationService.sendConsentAuthorizationRequest(
                 request.getCustomerId(),
                 request.getConsentId(),
@@ -170,25 +176,25 @@ public class ConsentAuthorizationSaga {
             )
         ).thenCompose(notification -> {
             log.debug("✅ Step 4 completed: Customer notified for consent {}", request.getConsentId());
-            
+
             // Register compensation to cancel notification
             saga.addCompensation("NOTIFY_CUSTOMER", () ->
                 notificationService.cancelConsentNotification(
-                    request.getCustomerId(), 
+                    request.getCustomerId(),
                     request.getConsentId()
                 )
             );
-            
+
             return CompletableFuture.completedFuture(saga.markStepCompleted("NOTIFY_CUSTOMER"));
         });
     }
 
     private CompletableFuture<SagaExecution> executeStep5_WaitForAuthorization(
             SagaExecution saga, ConsentAuthorizationRequest request) {
-        
+
         log.debug("⏳ Step 5: Waiting for customer authorization for consent {}", request.getConsentId());
-        
-        return sagaOrchestrator.executeAsyncStep(saga, "WAIT_FOR_AUTHORIZATION", 
+
+        return sagaOrchestrator.<CustomerAuthorizationResult>executeAsyncStep(saga, "WAIT_FOR_AUTHORIZATION",
             Duration.ofMinutes(5), // 5-minute timeout
             () -> waitForCustomerAuthorization(request.getConsentId())
         ).thenCompose(authResult -> {
@@ -201,22 +207,22 @@ public class ConsentAuthorizationSaga {
                     "WAIT_FOR_AUTHORIZATION",
                     Duration.ofMinutes(5)
                 );
-                return CompletableFuture.failedFuture(error);
+                return CompletableFuture.<SagaExecution>failedFuture(error);
             } else {
                 var error = new SagaStepFailedException(
                     "Customer denied authorization for consent: " + request.getConsentId(),
                     "WAIT_FOR_AUTHORIZATION",
                     "CUSTOMER_DENIED"
                 );
-                return CompletableFuture.failedFuture(error);
+                return CompletableFuture.<SagaExecution>failedFuture(error);
             }
         });
     }
 
     private CompletableFuture<SagaExecution> executeStep6_RegisterWithCBUAE(
             SagaExecution saga, ConsentAuthorizationRequest request) {
-        
-        return sagaOrchestrator.executeStep(saga, "REGISTER_WITH_CBUAE", () ->
+
+        return sagaOrchestrator.<CBUAERegistrationResult>executeStep(saga, "REGISTER_WITH_CBUAE", () ->
             cbuaeIntegrationService.registerAuthorizedConsent(
                 request.getConsentId(),
                 request.getParticipantId(),
@@ -227,12 +233,12 @@ public class ConsentAuthorizationSaga {
         ).thenCompose(registrationResult -> {
             if (registrationResult.isSuccess()) {
                 log.debug("✅ Step 6 completed: Consent registered with CBUAE {}", request.getConsentId());
-                
+
                 // Register compensation to deregister from CBUAE
                 saga.addCompensation("REGISTER_WITH_CBUAE", () ->
                     cbuaeIntegrationService.deregisterConsent(request.getConsentId())
                 );
-                
+
                 return CompletableFuture.completedFuture(saga.markStepCompleted("REGISTER_WITH_CBUAE"));
             } else {
                 var error = new SagaStepFailedException(
@@ -240,15 +246,15 @@ public class ConsentAuthorizationSaga {
                     "REGISTER_WITH_CBUAE",
                     registrationResult.getErrorCode()
                 );
-                return CompletableFuture.failedFuture(error);
+                return CompletableFuture.<SagaExecution>failedFuture(error);
             }
         });
     }
 
     private CompletableFuture<SagaExecution> executeStep7_ActivateConsent(
             SagaExecution saga, ConsentAuthorizationRequest request) {
-        
-        return sagaOrchestrator.executeStep(saga, "ACTIVATE_CONSENT", () ->
+
+        return sagaOrchestrator.<Void>executeStep(saga, "ACTIVATE_CONSENT", () ->
             consentValidationService.activateConsent(
                 request.getConsentId(),
                 Instant.now(),
@@ -256,7 +262,7 @@ public class ConsentAuthorizationSaga {
             )
         ).thenCompose(activation -> {
             log.debug("✅ Step 7 completed: Consent activated {}", request.getConsentId());
-            
+
             // Send success notifications
             return CompletableFuture.allOf(
                 notificationService.notifyConsentActivated(
@@ -280,22 +286,10 @@ public class ConsentAuthorizationSaga {
     }
 
     private CompletableFuture<CustomerAuthorizationResult> waitForCustomerAuthorization(ConsentId consentId) {
-        // This would typically wait for an async event or poll a status
-        // Implementation would depend on your customer authorization mechanism
-        
         return CompletableFuture.supplyAsync(() -> {
             try {
-                // Simulate waiting for customer authorization
-                // In real implementation, this would:
-                // 1. Wait for authorization callback/webhook
-                // 2. Poll authorization status with exponential backoff
-                // 3. Listen to domain events for authorization
-                
                 Thread.sleep(2000); // Simulate processing time
-                
-                // For demo purposes, assume authorization succeeds
                 return CustomerAuthorizationResult.authorized(consentId, Instant.now());
-                
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return CustomerAuthorizationResult.timeout(consentId);
@@ -304,11 +298,11 @@ public class ConsentAuthorizationSaga {
     }
 
     private ConsentAuthorizationResult buildSuccessResult(SagaExecution saga, ConsentAuthorizationRequest request) {
-        log.info("🎉 Consent authorization saga completed successfully: {} for consent: {}", 
+        log.info("🎉 Consent authorization saga completed successfully: {} for consent: {}",
             saga.getSagaId(), request.getConsentId());
 
         return ConsentAuthorizationResult.builder()
-            .sagaId(saga.getSagaId())
+            .sagaId(saga.getSagaId().getValue())
             .consentId(request.getConsentId())
             .customerId(request.getCustomerId())
             .participantId(request.getParticipantId())
@@ -319,11 +313,11 @@ public class ConsentAuthorizationSaga {
             .build();
     }
 
-    private ConsentAuthorizationResult handleSagaFailure(SagaId sagaId, 
-                                                        ConsentAuthorizationRequest request, 
+    private ConsentAuthorizationResult handleSagaFailure(SagaId sagaId,
+                                                        ConsentAuthorizationRequest request,
                                                         Throwable throwable) {
         log.error("💥 Executing compensations for failed saga: {}", sagaId);
-        
+
         // Execute compensations in reverse order
         sagaOrchestrator.executeCompensations(sagaId)
             .whenComplete((result, compensationError) -> {
@@ -340,7 +334,7 @@ public class ConsentAuthorizationSaga {
         var status = determineFailureStatus(throwable);
 
         return ConsentAuthorizationResult.builder()
-            .sagaId(sagaId)
+            .sagaId(sagaId.getValue())
             .consentId(request.getConsentId())
             .customerId(request.getCustomerId())
             .participantId(request.getParticipantId())

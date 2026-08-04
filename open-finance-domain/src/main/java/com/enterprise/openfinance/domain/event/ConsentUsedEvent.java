@@ -47,8 +47,8 @@ public class ConsentUsedEvent implements DomainEvent {
     public Map<String, Object> getData() {
         return Map.of(
             "consentId", consentId.getValue(),
-            "customerId", customerId.getValue(),
-            "participantId", participantId.getValue(),
+            "customerId", customerId.value(),
+            "participantId", participantId.value(),
             "accessType", accessType,
             "dataRequested", dataRequested,
             "processingTimeMs", processingTimeMs

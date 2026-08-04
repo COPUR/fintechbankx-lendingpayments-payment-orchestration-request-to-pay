@@ -37,7 +37,7 @@ public final class ConsentId {
     public static ConsentId generate() {
         return new ConsentId("CONSENT-" + UUID.randomUUID().toString().toUpperCase());
     }
-    
+
     @Override
     public String toString() {
         return value;

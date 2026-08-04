@@ -1,6 +1,6 @@
 package com.enterprise.openfinance.domain.port.output;
 
-import com.enterprise.openfinance.infrastructure.analytics.*;
+import com.enterprise.openfinance.domain.model.analytics.*;
 
 import java.time.LocalDate;
 import java.util.List;

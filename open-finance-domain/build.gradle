@@ -5,22 +5,13 @@ plugins {
 
 description = 'Request-to-Pay domain layer'
 
-sourceSets {
-    main {
-        java {
-            setSrcDirs(['src/main/java'])
-            include 'com/enterprise/openfinance/requesttopay/**'
-        }
-    }
-    test {
-        java {
-            setSrcDirs(['src/test/java'])
-            include 'com/enterprise/openfinance/requesttopay/**'
-        }
-    }
-}
-
 dependencies {
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+
+    testCompileOnly 'org.projectlombok:lombok:1.18.30'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.30'
+
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core'
     testImplementation 'org.mockito:mockito-core'

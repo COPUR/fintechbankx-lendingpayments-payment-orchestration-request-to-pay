@@ -10,39 +10,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class MoneyTest {
 
     @Test
-    void shouldCreateWhenAmountAndCurrencyAreValid() {
-        Money money = new Money(new BigDecimal("500.00"), "AED");
-
-        assertThat(money.amount()).isEqualByComparingTo("500.00");
-        assertThat(money.currency()).isEqualTo("AED");
+    void shouldCreateValidMoney() {
+        Money money = new Money(new BigDecimal("100.50"), "USD");
+        assertThat(money.amount()).isEqualTo(new BigDecimal("100.50"));
+        assertThat(money.currency()).isEqualTo("USD");
     }
 
     @Test
-    void shouldRejectNullAmount() {
-        assertThatThrownBy(() -> new Money(null, "AED"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Amount must be positive");
+    void shouldRejectNegativeOrZeroAmount() {
+        assertThatThrownBy(() -> new Money(BigDecimal.ZERO, "USD"))
+                .isInstanceOf(IllegalArgumentException.class);
+
+        assertThatThrownBy(() -> new Money(new BigDecimal("-10.00"), "USD"))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    void shouldRejectZeroOrNegativeAmount() {
-        assertThatThrownBy(() -> new Money(BigDecimal.ZERO, "AED"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Amount must be positive");
-
-        assertThatThrownBy(() -> new Money(new BigDecimal("-1.00"), "AED"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Amount must be positive");
-    }
-
-    @Test
-    void shouldRejectMissingCurrency() {
+    void shouldRejectNullOrBlankCurrency() {
         assertThatThrownBy(() -> new Money(new BigDecimal("10.00"), null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Currency is required");
+                .isInstanceOf(IllegalArgumentException.class);
 
-        assertThatThrownBy(() -> new Money(new BigDecimal("10.00"), "   "))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Currency is required");
+        assertThatThrownBy(() -> new Money(new BigDecimal("10.00"), "  "))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

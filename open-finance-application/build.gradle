@@ -8,14 +8,12 @@ description = 'Request-to-Pay application layer'
 sourceSets {
     main {
         java {
-            setSrcDirs(['src/main/java'])
-            include 'com/enterprise/openfinance/requesttopay/**'
+            srcDirs = ['src/main/java']
         }
     }
     test {
         java {
-            setSrcDirs(['src/test/java'])
-            include 'com/enterprise/openfinance/requesttopay/**'
+            srcDirs = ['src/test/java']
         }
     }
 }
@@ -24,6 +22,13 @@ dependencies {
     implementation project(':open-finance-domain')
     implementation 'org.springframework:spring-context'
     implementation 'org.springframework:spring-tx'
+    implementation 'org.slf4j:slf4j-api:2.0.13'
+
+    compileOnly 'org.projectlombok:lombok:1.18.30'
+    annotationProcessor 'org.projectlombok:lombok:1.18.30'
+
+    testCompileOnly 'org.projectlombok:lombok:1.18.30'
+    testAnnotationProcessor 'org.projectlombok:lombok:1.18.30'
 
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core'

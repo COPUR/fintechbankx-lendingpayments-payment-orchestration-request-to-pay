@@ -1,5 +1,7 @@
 package com.enterprise.openfinance.application.saga;
 
+import com.enterprise.openfinance.application.saga.model.*;
+import com.enterprise.openfinance.application.saga.port.out.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -152,9 +154,8 @@ public class SagaOrchestrator {
             var future = stepExecution.get();
             
             // Add timeout handling
-            var timeoutFuture = CompletableFuture.delayedExecutor(timeout.toMillis(), 
-                java.util.concurrent.TimeUnit.MILLISECONDS)
-                .execute(() -> {
+            var timeoutFuture = new CompletableFuture<Void>().completeOnTimeout(null, timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
+                .thenRun(() -> {
                     if (!future.isDone()) {
                         future.completeExceptionally(
                             new TimeoutException("Step timeout after: " + timeout));
@@ -178,7 +179,9 @@ public class SagaOrchestrator {
         var saga = activeSagas.get(sagaId);
         if (saga == null) {
             return sagaStateRepository.loadSagaState(sagaId)
-                .thenCompose(this::executeCompensationsForSaga);
+                .thenCompose(opt -> opt.map(this::executeCompensationsForSaga)
+                        .orElseGet(() -> CompletableFuture.completedFuture(
+                                CompensationResult.builder().sagaId(sagaId).build())));
         }
         
         return executeCompensationsForSaga(saga);
@@ -333,7 +336,6 @@ public class SagaOrchestrator {
         }
         
         return sagaStateRepository.loadSagaState(sagaId)
-            .thenApply(Optional::of)
             .exceptionally(throwable -> {
                 if (throwable.getCause() instanceof SagaNotFoundException) {
                     return Optional.empty();

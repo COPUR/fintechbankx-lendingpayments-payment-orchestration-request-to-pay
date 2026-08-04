@@ -44,10 +44,7 @@ class PiiMaskingJsonProviderTest {
         Map<String, Object> result = getResult();
         String maskedMessage = (String) result.get("message");
 
-        assertEquals("User '***MASKED***' requested payment from '***MASKED***' for amount ***MASKED***", maskedMessage
-                .replaceAll("\"debtorId\":\"\\*\\*\\*MASKED\\*\\*\\*\"", "'***MASKED***'")
-                .replaceAll("\"creditorName\":\"\\*\\*\\*MASKED\\*\\*\\*\"", "'***MASKED***'")
-                .replaceAll("\"amount\":\\*\\*\\*MASKED\\*\\*\\*", "amount ***MASKED***"));
+        assertEquals("User '***MASKED***' requested payment from '***MASKED***' for amount ***MASKED***", maskedMessage);
     }
 
     @Test

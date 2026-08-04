@@ -1,6 +1,18 @@
 package com.enterprise.openfinance.application.saga;
 
-import com.enterprise.openfinance.domain.event.*;
+import com.enterprise.openfinance.application.saga.model.AggregationId;
+import com.enterprise.openfinance.application.saga.model.SagaExecution;
+import com.enterprise.openfinance.application.saga.model.SagaId;
+import com.enterprise.openfinance.domain.event.ConsentValidationResult;
+import com.enterprise.openfinance.domain.event.RateLimitResult;
+import com.enterprise.openfinance.domain.event.AggregatedData;
+import com.enterprise.openfinance.domain.event.PlatformData;
+import com.enterprise.openfinance.domain.event.TransformedData;
+import com.enterprise.openfinance.domain.event.EncryptedData;
+import com.enterprise.openfinance.domain.event.DataDeliveryResult;
+import com.enterprise.openfinance.domain.event.DataSharingResult;
+import com.enterprise.openfinance.domain.event.DataSharingStatus;
+import com.enterprise.openfinance.domain.event.DataSharingRequest;
 import com.enterprise.openfinance.domain.model.consent.ConsentId;
 import com.enterprise.openfinance.domain.model.consent.ConsentScope;
 import com.enterprise.openfinance.domain.model.participant.ParticipantId;
@@ -12,22 +24,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
+import java.util.ArrayList;
 import java.util.concurrent.CompletableFuture;
 
 /**
  * Saga orchestrator for data sharing request workflow.
- * Handles the complex multi-step process of validating consents, 
- * aggregating data from multiple sources, and securely sharing data
- * across the Open Finance ecosystem.
- * 
- * Cross-Platform Data Flow:
- * 1. Enterprise Loan Management → Loan and credit data
- * 2. AmanahFi Platform → Islamic finance and Sharia-compliant data  
- * 3. Masrufi Framework → Expense management and budget data
- * 4. External providers → Third-party financial data
- * 
- * Security: End-to-end encryption, PCI-DSS v4 compliance, audit trail
  */
 @Slf4j
 @Component
@@ -43,20 +46,6 @@ public class DataSharingRequestSaga {
     private final RateLimitingService rateLimitingService;
     private final ComplianceService complianceService;
 
-    /**
-     * Orchestrates the complete data sharing request saga.
-     * 
-     * Steps:
-     * 1. Validate active consent and scope permissions
-     * 2. Check rate limiting and security constraints
-     * 3. Aggregate data from multiple platforms (Loan, AmanahFi, Masrufi)
-     * 4. Apply data transformation and masking rules
-     * 5. Encrypt data for secure transmission  
-     * 6. Deliver data to requesting participant
-     * 7. Record audit trail and compliance events
-     * 
-     * Compensations handle partial failures and ensure data consistency.
-     */
     @Transactional
     public CompletableFuture<DataSharingResult> orchestrateDataSharingRequest(
             DataSharingRequest request) {
@@ -65,7 +54,7 @@ public class DataSharingRequestSaga {
         log.info("📊 Starting data sharing saga: {} for consent: {} participant: {}", 
             sagaId, request.getConsentId(), request.getParticipantId());
 
-        return sagaOrchestrator.startSaga(sagaId, request)
+        return sagaOrchestrator.<DataSharingRequest>startSaga(sagaId, request)
             .thenCompose(saga -> executeStep1_ValidateConsent(saga, request))
             .thenCompose(saga -> executeStep2_CheckRateLimits(saga, request))
             .thenCompose(saga -> executeStep3_AggregateData(saga, request))
@@ -83,7 +72,7 @@ public class DataSharingRequestSaga {
     private CompletableFuture<SagaExecution> executeStep1_ValidateConsent(
             SagaExecution saga, DataSharingRequest request) {
         
-        return sagaOrchestrator.executeStep(saga, "VALIDATE_CONSENT", () ->
+        return sagaOrchestrator.<ConsentValidationResult>executeStep(saga, "VALIDATE_CONSENT", () ->
             consentValidationService.validateConsentForDataAccess(
                 request.getConsentId(),
                 request.getParticipantId(),
@@ -102,7 +91,7 @@ public class DataSharingRequestSaga {
                     "VALIDATE_CONSENT",
                     determineValidationErrorCode(violations)
                 );
-                return CompletableFuture.failedFuture(error);
+                return CompletableFuture.<SagaExecution>failedFuture(error);
             }
         });
     }
@@ -110,7 +99,7 @@ public class DataSharingRequestSaga {
     private CompletableFuture<SagaExecution> executeStep2_CheckRateLimits(
             SagaExecution saga, DataSharingRequest request) {
         
-        return sagaOrchestrator.executeStep(saga, "CHECK_RATE_LIMITS", () ->
+        return sagaOrchestrator.<RateLimitResult>executeStep(saga, "CHECK_RATE_LIMITS", () ->
             rateLimitingService.checkRateLimit(
                 request.getParticipantId(),
                 request.getConsentId(),
@@ -121,7 +110,6 @@ public class DataSharingRequestSaga {
             if (rateLimitCheck.isAllowed()) {
                 log.debug("✅ Step 2 completed: Rate limits passed for participant {}", request.getParticipantId());
                 
-                // Register compensation to restore rate limit quota on failure
                 saga.addCompensation("CHECK_RATE_LIMITS", () ->
                     rateLimitingService.restoreQuota(
                         request.getParticipantId(),
@@ -137,7 +125,7 @@ public class DataSharingRequestSaga {
                     "CHECK_RATE_LIMITS",
                     "RATE_LIMIT_EXCEEDED"
                 );
-                return CompletableFuture.failedFuture(error);
+                return CompletableFuture.<SagaExecution>failedFuture(error);
             }
         });
     }
@@ -145,19 +133,17 @@ public class DataSharingRequestSaga {
     private CompletableFuture<SagaExecution> executeStep3_AggregateData(
             SagaExecution saga, DataSharingRequest request) {
         
-        return sagaOrchestrator.executeAsyncStep(saga, "AGGREGATE_DATA", 
-            Duration.ofMinutes(2), // 2-minute timeout for data aggregation
+        return sagaOrchestrator.<AggregatedData>executeAsyncStep(saga, "AGGREGATE_DATA",
+            Duration.ofMinutes(2),
             () -> aggregateDataFromAllPlatforms(request)
         ).thenCompose(aggregatedData -> {
             log.debug("✅ Step 3 completed: Data aggregated from {} sources", 
                 aggregatedData.getSourceCount());
             
-            // Store aggregated data temporarily for next steps
             saga.addContextData("aggregatedData", aggregatedData);
             
-            // Register compensation to clean up aggregated data
             saga.addCompensation("AGGREGATE_DATA", () ->
-                dataAggregationService.cleanupAggregatedData(aggregatedData.getAggregationId())
+                dataAggregationService.cleanupAggregatedData(new AggregationId(aggregatedData.getAggregationId()))
             );
             
             return CompletableFuture.completedFuture(saga.markStepCompleted("AGGREGATE_DATA"));
@@ -169,7 +155,7 @@ public class DataSharingRequestSaga {
         
         var aggregatedData = (AggregatedData) saga.getContextData("aggregatedData");
         
-        return sagaOrchestrator.executeStep(saga, "TRANSFORM_DATA", () ->
+        return sagaOrchestrator.<TransformedData>executeStep(saga, "TRANSFORM_DATA", () ->
             dataTransformationService.transformForParticipant(
                 aggregatedData,
                 request.getParticipantId(),
@@ -180,10 +166,8 @@ public class DataSharingRequestSaga {
         ).thenCompose(transformedData -> {
             log.debug("✅ Step 4 completed: Data transformed for participant {}", request.getParticipantId());
             
-            // Store transformed data for next steps
             saga.addContextData("transformedData", transformedData);
             
-            // Register compensation to clean up transformed data
             saga.addCompensation("TRANSFORM_DATA", () ->
                 dataTransformationService.cleanupTransformedData(transformedData.getTransformationId())
             );
@@ -197,7 +181,7 @@ public class DataSharingRequestSaga {
         
         var transformedData = (TransformedData) saga.getContextData("transformedData");
         
-        return sagaOrchestrator.executeStep(saga, "ENCRYPT_DATA", () ->
+        return sagaOrchestrator.<EncryptedData>executeStep(saga, "ENCRYPT_DATA", () ->
             dataEncryptionService.encryptForParticipant(
                 transformedData,
                 request.getParticipantId(),
@@ -208,10 +192,8 @@ public class DataSharingRequestSaga {
             log.debug("✅ Step 5 completed: Data encrypted for secure transmission to {}", 
                 request.getParticipantId());
             
-            // Store encrypted data for delivery
             saga.addContextData("encryptedData", encryptedData);
             
-            // Register compensation to securely delete encrypted data
             saga.addCompensation("ENCRYPT_DATA", () ->
                 dataEncryptionService.securelyDeleteEncryptedData(encryptedData.getEncryptionId())
             );
@@ -225,8 +207,8 @@ public class DataSharingRequestSaga {
         
         var encryptedData = (EncryptedData) saga.getContextData("encryptedData");
         
-        return sagaOrchestrator.executeAsyncStep(saga, "DELIVER_DATA",
-            Duration.ofMinutes(1), // 1-minute timeout for data delivery
+        return sagaOrchestrator.<DataDeliveryResult>executeAsyncStep(saga, "DELIVER_DATA",
+            Duration.ofMinutes(1),
             () -> dataAggregationService.deliverDataToParticipant(
                 encryptedData,
                 request.getParticipantId(),
@@ -239,7 +221,6 @@ public class DataSharingRequestSaga {
                 log.debug("✅ Step 6 completed: Data delivered successfully to participant {}", 
                     request.getParticipantId());
                 
-                // Store delivery confirmation
                 saga.addContextData("deliveryResult", deliveryResult);
                 
                 return CompletableFuture.completedFuture(saga.markStepCompleted("DELIVER_DATA"));
@@ -249,7 +230,7 @@ public class DataSharingRequestSaga {
                     "DELIVER_DATA",
                     deliveryResult.getErrorCode()
                 );
-                return CompletableFuture.failedFuture(error);
+                return CompletableFuture.<SagaExecution>failedFuture(error);
             }
         });
     }
@@ -260,9 +241,8 @@ public class DataSharingRequestSaga {
         var deliveryResult = (DataDeliveryResult) saga.getContextData("deliveryResult");
         var aggregatedData = (AggregatedData) saga.getContextData("aggregatedData");
         
-        return sagaOrchestrator.executeStep(saga, "RECORD_AUDIT_TRAIL", () ->
+        return sagaOrchestrator.<Void>executeStep(saga, "RECORD_AUDIT_TRAIL", () ->
             CompletableFuture.allOf(
-                // Record data access event
                 auditService.recordDataAccess(
                     request.getConsentId(),
                     request.getCustomerId(),
@@ -273,7 +253,6 @@ public class DataSharingRequestSaga {
                     saga.getSagaId()
                 ),
                 
-                // Record compliance event
                 complianceService.recordComplianceEvent(
                     "DATA_SHARED",
                     request.getConsentId(),
@@ -282,11 +261,10 @@ public class DataSharingRequestSaga {
                         "dataSize", aggregatedData.getDataSize(),
                         "encryptionMethod", request.getEncryptionMethod(),
                         "deliveryMethod", request.getDeliveryMethod(),
-                        "sagaId", saga.getSagaId().toString()
+                        "sagaId", saga.getSagaId().getValue()
                     )
                 ),
                 
-                // Update consent usage statistics
                 consentValidationService.updateConsentUsage(
                     request.getConsentId(),
                     request.getRequestedScopes(),
@@ -305,42 +283,20 @@ public class DataSharingRequestSaga {
 
         var aggregationTasks = new ArrayList<CompletableFuture<PlatformData>>();
 
-        // Determine which platforms to query based on requested scopes
         if (requiresLoanData(request.getRequestedScopes())) {
-            aggregationTasks.add(
-                dataAggregationService.aggregateLoanData(
-                    request.getCustomerId(),
-                    request.getRequestedScopes()
-                )
-            );
+            aggregationTasks.add(dataAggregationService.aggregateLoanData(request.getCustomerId(), request.getRequestedScopes()));
         }
 
         if (requiresIslamicFinanceData(request.getRequestedScopes())) {
-            aggregationTasks.add(
-                dataAggregationService.aggregateAmanahFiData(
-                    request.getCustomerId(),
-                    request.getRequestedScopes()
-                )
-            );
+            aggregationTasks.add(dataAggregationService.aggregateAmanahFiData(request.getCustomerId(), request.getRequestedScopes()));
         }
 
         if (requiresExpenseData(request.getRequestedScopes())) {
-            aggregationTasks.add(
-                dataAggregationService.aggregateMasrufiData(
-                    request.getCustomerId(),
-                    request.getRequestedScopes()
-                )
-            );
+            aggregationTasks.add(dataAggregationService.aggregateMasrufiData(request.getCustomerId(), request.getRequestedScopes()));
         }
 
         if (requiresExternalData(request.getRequestedScopes())) {
-            aggregationTasks.add(
-                dataAggregationService.aggregateExternalData(
-                    request.getCustomerId(),
-                    request.getRequestedScopes(),
-                    request.getParticipantId()
-                )
-            );
+            aggregationTasks.add(dataAggregationService.aggregateExternalData(request.getCustomerId(), request.getRequestedScopes(), request.getParticipantId()));
         }
 
         return CompletableFuture.allOf(aggregationTasks.toArray(new CompletableFuture[0]))
@@ -350,7 +306,7 @@ public class DataSharingRequestSaga {
                     .toList();
 
                 return AggregatedData.builder()
-                    .aggregationId(AggregationId.generate())
+                    .aggregationId(AggregationId.generate().value())
                     .platformDataList(platformDataList)
                     .sourceCount(platformDataList.size())
                     .dataSize(platformDataList.stream().mapToLong(PlatformData::getDataSize).sum())
@@ -370,7 +326,7 @@ public class DataSharingRequestSaga {
             saga.getSagaId(), request.getConsentId());
 
         return DataSharingResult.builder()
-            .sagaId(saga.getSagaId())
+            .sagaId(saga.getSagaId().getValue())
             .requestId(request.getRequestId())
             .consentId(request.getConsentId())
             .customerId(request.getCustomerId())
@@ -390,7 +346,6 @@ public class DataSharingRequestSaga {
                                                Throwable throwable) {
         log.error("💥 Executing compensations for failed data sharing saga: {}", sagaId);
         
-        // Execute compensations in reverse order
         sagaOrchestrator.executeCompensations(sagaId)
             .whenComplete((result, compensationError) -> {
                 if (compensationError != null) {
@@ -406,7 +361,7 @@ public class DataSharingRequestSaga {
         var status = determineFailureStatus(throwable);
 
         return DataSharingResult.builder()
-            .sagaId(sagaId)
+            .sagaId(sagaId.getValue())
             .requestId(request.getRequestId())
             .consentId(request.getConsentId())
             .customerId(request.getCustomerId())
@@ -417,7 +372,6 @@ public class DataSharingRequestSaga {
             .build();
     }
 
-    // Helper methods for scope checking
     private boolean requiresLoanData(Set<ConsentScope> scopes) {
         return scopes.contains(ConsentScope.ACCOUNT_INFORMATION) || 
                scopes.contains(ConsentScope.LOAN_INFORMATION);
@@ -439,11 +393,11 @@ public class DataSharingRequestSaga {
     }
 
     private String determineValidationErrorCode(Set<String> violations) {
-        if (violations.contains("CONSENT_EXPIRED")) {
+        if (violations != null && violations.contains("CONSENT_EXPIRED")) {
             return "CONSENT_EXPIRED";
-        } else if (violations.contains("SCOPE_NOT_PERMITTED")) {
+        } else if (violations != null && violations.contains("SCOPE_NOT_PERMITTED")) {
             return "INSUFFICIENT_SCOPE";
-        } else if (violations.contains("CONSENT_REVOKED")) {
+        } else if (violations != null && violations.contains("CONSENT_REVOKED")) {
             return "CONSENT_REVOKED";
         } else {
             return "VALIDATION_FAILED";

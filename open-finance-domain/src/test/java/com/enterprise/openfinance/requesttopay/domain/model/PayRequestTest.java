@@ -11,83 +11,102 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PayRequestTest {
 
     @Test
-    void shouldCreateAwaitingAuthorizationRequest() {
+    void shouldCreateValidPayRequest() {
         PayRequest request = new PayRequest(
-                "CONS-001",
-                "TPP-001",
-                "PSU-001",
-                "Utilities Co",
-                new BigDecimal("500.00"),
-                "AED",
+                "consent-123",
+                "tpp-456",
+                "psu-789",
+                "Acme Corp",
+                new BigDecimal("100.00"),
+                "usd",
                 PayRequestStatus.AWAITING_AUTHORISATION,
-                Instant.parse("2026-02-10T10:00:00Z"),
-                Instant.parse("2026-02-10T10:00:00Z"),
+                Instant.now(),
+                Instant.now(),
                 null
         );
 
-        assertThat(request.status()).isEqualTo(PayRequestStatus.AWAITING_AUTHORISATION);
+        assertThat(request.consentId()).isEqualTo("consent-123");
+        assertThat(request.currency()).isEqualTo("USD");
         assertThat(request.isFinalized()).isFalse();
     }
 
     @Test
-    void shouldTransitionToRejected() {
-        PayRequest request = baseRequest();
+    void shouldRejectNegativeAmount() {
+        assertThatThrownBy(() -> new PayRequest(
+                "consent-123", "tpp-456", "psu-789", "Acme Corp",
+                new BigDecimal("-10.00"), "USD", PayRequestStatus.AWAITING_AUTHORISATION,
+                Instant.now(), Instant.now(), null
+        ))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("positive");
+    }
 
-        PayRequest rejected = request.reject(Instant.parse("2026-02-10T12:00:00Z"));
+    @Test
+    void shouldRejectBlankFields() {
+        assertThatThrownBy(() -> new PayRequest(
+                "  ", "tpp-456", "psu-789", "Acme Corp",
+                new BigDecimal("10.00"), "USD", PayRequestStatus.AWAITING_AUTHORISATION,
+                Instant.now(), Instant.now(), null
+        ))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("consentId");
+    }
+
+    @Test
+    void shouldAllowRejectionIfNotFinalized() {
+        PayRequest request = new PayRequest(
+                "consent-123", "tpp-456", "psu-789", "Acme Corp",
+                new BigDecimal("100.00"), "USD", PayRequestStatus.AWAITING_AUTHORISATION,
+                Instant.now(), Instant.now(), null
+        );
+
+        Instant rejectionTime = Instant.now();
+        PayRequest rejected = request.reject(rejectionTime);
 
         assertThat(rejected.status()).isEqualTo(PayRequestStatus.REJECTED);
+        assertThat(rejected.updatedAt()).isEqualTo(rejectionTime);
         assertThat(rejected.isFinalized()).isTrue();
     }
 
     @Test
-    void shouldTransitionToConsumed() {
-        PayRequest request = baseRequest();
+    void shouldAllowConsumptionIfNotFinalized() {
+        PayRequest request = new PayRequest(
+                "consent-123", "tpp-456", "psu-789", "Acme Corp",
+                new BigDecimal("100.00"), "USD", PayRequestStatus.AWAITING_AUTHORISATION,
+                Instant.now(), Instant.now(), null
+        );
 
-        PayRequest consumed = request.consume("PAY-001", Instant.parse("2026-02-10T12:10:00Z"));
+        Instant consumptionTime = Instant.now();
+        PayRequest consumed = request.consume("payment-999", consumptionTime);
 
         assertThat(consumed.status()).isEqualTo(PayRequestStatus.CONSUMED);
-        assertThat(consumed.paymentIdOptional()).contains("PAY-001");
+        assertThat(consumed.updatedAt()).isEqualTo(consumptionTime);
+        assertThat(consumed.paymentId()).isEqualTo("payment-999");
+        assertThat(consumed.isFinalized()).isTrue();
     }
 
     @Test
-    void shouldRejectDuplicateFinalize() {
-        PayRequest request = baseRequest().consume("PAY-001", Instant.parse("2026-02-10T12:10:00Z"));
-
-        assertThatThrownBy(() -> request.reject(Instant.parse("2026-02-10T12:20:00Z")))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("finalized");
-    }
-
-    @Test
-    void shouldRejectInvalidFields() {
-        assertThatThrownBy(() -> new PayRequest(" ", "TPP", "PSU", "Creditor", new BigDecimal("1.00"), "AED",
-                PayRequestStatus.AWAITING_AUTHORISATION, Instant.parse("2026-02-10T10:00:00Z"),
-                Instant.parse("2026-02-10T10:00:00Z"),
-                null))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("consentId");
-    }
-
-    @Test
-    void shouldValidateOwnershipByTpp() {
-        PayRequest request = baseRequest();
-
-        assertThat(request.belongsTo("TPP-001")).isTrue();
-        assertThat(request.belongsTo("TPP-XYZ")).isFalse();
-    }
-
-    private static PayRequest baseRequest() {
-        return new PayRequest(
-                "CONS-001",
-                "TPP-001",
-                "PSU-001",
-                "Utilities Co",
-                new BigDecimal("500.00"),
-                "AED",
-                PayRequestStatus.AWAITING_AUTHORISATION,
-                Instant.parse("2026-02-10T10:00:00Z"),
-                Instant.parse("2026-02-10T10:00:00Z"),
-                null
+    void shouldPreventRejectionIfAlreadyFinalized() {
+        PayRequest request = new PayRequest(
+                "consent-123", "tpp-456", "psu-789", "Acme Corp",
+                new BigDecimal("100.00"), "USD", PayRequestStatus.REJECTED,
+                Instant.now(), Instant.now(), null
         );
+
+        assertThatThrownBy(() -> request.reject(Instant.now()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("already finalized");
+    }
+
+    @Test
+    void shouldCheckBelongsTo() {
+        PayRequest request = new PayRequest(
+                "consent-123", "tpp-456", "psu-789", "Acme Corp",
+                new BigDecimal("100.00"), "USD", PayRequestStatus.AWAITING_AUTHORISATION,
+                Instant.now(), Instant.now(), null
+        );
+
+        assertThat(request.belongsTo("tpp-456")).isTrue();
+        assertThat(request.belongsTo("other-tpp")).isFalse();
     }
 }

@@ -1,6 +1,7 @@
 package com.enterprise.openfinance.domain.event;
 
 import com.enterprise.openfinance.domain.model.participant.ParticipantId;
+import com.enterprise.shared.domain.event.DomainEvent;
 import lombok.Builder;
 import lombok.Data;
 
@@ -21,7 +22,7 @@ public class ParticipantValidatedEvent implements DomainEvent {
 
     @Override
     public String getAggregateId() {
-        return participantId.getValue();
+        return participantId.value();
     }
 
     @Override
@@ -32,10 +33,10 @@ public class ParticipantValidatedEvent implements DomainEvent {
     @Override
     public Map<String, Object> getData() {
         return Map.of(
-            "participantId", participantId.getValue(),
+            "participantId", participantId.value(),
             "isValid", isValid,
-            "validationDetails", validationDetails,
-            "validatedAt", occurredAt
+            "validationDetails", validationDetails != null ? validationDetails : "none",
+            "validatedAt", occurredAt != null ? occurredAt : Instant.now()
         );
     }
 

@@ -1,10 +1,12 @@
 package com.enterprise.openfinance.domain.event;
 
 import com.enterprise.openfinance.domain.model.participant.ParticipantId;
+import com.enterprise.openfinance.domain.model.participant.ParticipantRole;
+import com.enterprise.shared.domain.event.DomainEvent;
 import lombok.Builder;
 import lombok.Data;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
 
@@ -14,21 +16,34 @@ public class ParticipantOnboardedEvent implements DomainEvent {
     private final ParticipantId participantId;
     private final String legalName;
     private final ParticipantRole role;
-    private final Instant occurredAt;
+    private final LocalDateTime occurredAt;
     private final String correlationId;
     private final String causationId;
     private final Long version;
 
-    public enum ParticipantRole {
-        ASPSP, // Account Servicing Payment Service Provider
-        PISP,  // Payment Initiation Service Provider
-        AISP,  // Account Information Service Provider
-        CBPII  // Card Based Payment Instrument Issuer
+    public ParticipantOnboardedEvent(ParticipantId participantId, String legalName, ParticipantRole role, LocalDateTime occurredAt) {
+        this.participantId = participantId;
+        this.legalName = legalName;
+        this.role = role;
+        this.occurredAt = occurredAt;
+        this.correlationId = UUID.randomUUID().toString();
+        this.causationId = UUID.randomUUID().toString();
+        this.version = 1L;
+    }
+
+    public ParticipantOnboardedEvent(ParticipantId participantId, String legalName, ParticipantRole role, LocalDateTime occurredAt, String correlationId, String causationId, Long version) {
+        this.participantId = participantId;
+        this.legalName = legalName;
+        this.role = role;
+        this.occurredAt = occurredAt;
+        this.correlationId = correlationId;
+        this.causationId = causationId;
+        this.version = version;
     }
 
     @Override
     public String getAggregateId() {
-        return participantId.getValue();
+        return participantId.value();
     }
 
     @Override
@@ -39,17 +54,10 @@ public class ParticipantOnboardedEvent implements DomainEvent {
     @Override
     public Map<String, Object> getData() {
         return Map.of(
-            "participantId", participantId.getValue(),
+            "participantId", participantId.value(),
             "legalName", legalName,
             "role", role,
             "onboardedAt", occurredAt
         );
-    }
-
-    public static ParticipantOnboardedEventBuilder builder() {
-        return new ParticipantOnboardedEventBuilder()
-            .correlationId(UUID.randomUUID().toString())
-            .causationId(UUID.randomUUID().toString())
-            .version(1L);
     }
 }

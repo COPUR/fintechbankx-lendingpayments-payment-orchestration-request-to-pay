@@ -5,10 +5,11 @@ import com.enterprise.openfinance.domain.model.consent.ConsentPurpose;
 import com.enterprise.openfinance.domain.model.consent.ConsentScope;
 import com.enterprise.openfinance.domain.model.participant.ParticipantId;
 import com.enterprise.shared.domain.CustomerId;
+import com.enterprise.shared.domain.event.DomainEvent;
 import lombok.Builder;
 import lombok.Data;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -21,11 +22,16 @@ public class ConsentCreatedEvent implements DomainEvent {
     private final ParticipantId participantId;
     private final Set<ConsentScope> scopes;
     private final ConsentPurpose purpose;
-    private final Instant occurredAt;
-    private final Instant expiresAt;
-    private final String correlationId;
-    private final String causationId;
-    private final Long version;
+    private final LocalDateTime createdAt;
+
+    public ConsentCreatedEvent(ConsentId consentId, CustomerId customerId, ParticipantId participantId, Set<ConsentScope> scopes, ConsentPurpose purpose, LocalDateTime createdAt) {
+        this.consentId = consentId;
+        this.customerId = customerId;
+        this.participantId = participantId;
+        this.scopes = scopes;
+        this.purpose = purpose;
+        this.createdAt = createdAt;
+    }
 
     @Override
     public String getAggregateId() {
@@ -41,18 +47,9 @@ public class ConsentCreatedEvent implements DomainEvent {
     public Map<String, Object> getData() {
         return Map.of(
             "consentId", consentId.getValue(),
-            "customerId", customerId.getValue(),
-            "participantId", participantId.getValue(),
-            "scopes", scopes,
-            "purpose", purpose,
-            "expiresAt", expiresAt
+            "customerId", customerId.value(),
+            "participantId", participantId.value(),
+            "purpose", purpose.name()
         );
-    }
-
-    public static ConsentCreatedEventBuilder builder() {
-        return new ConsentCreatedEventBuilder()
-            .correlationId(UUID.randomUUID().toString())
-            .causationId(UUID.randomUUID().toString())
-            .version(1L);
     }
 }

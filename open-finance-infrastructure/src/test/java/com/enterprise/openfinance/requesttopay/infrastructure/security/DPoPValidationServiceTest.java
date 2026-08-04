@@ -39,7 +39,9 @@ class DPoPValidationServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         dpopValidationService = new DPoPValidationService(dpopNonceRepository);
-        ecKey = new ECKeyGenerator(Curve.P_256).generate();
+        ecKey = new ECKeyGenerator(Curve.P_256)
+                .keyID(UUID.randomUUID().toString())
+                .generate();
     }
 
     private String createDPoPProof(HttpMethod method, URI uri, String jti, Instant iat) throws Exception {

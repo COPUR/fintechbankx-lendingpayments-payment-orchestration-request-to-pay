@@ -182,9 +182,13 @@ components:
         Authorization: DPoP <access token> from the fintechbankx realm, with
         cnf.jkt bound to the key of the DPoP proof header; aud must contain
         svc-pay-request-to-pay and scope must contain payments. The calling
-        client (azp) must be a TPP: platform service clients (svc-*) and the
-        first-party web and mobile clients are refused with 403. The DPoP
-        proof must carry ath, the base64url SHA-256 of the access token.
+        client (azp, else client_id) must be positively known as a TPP
+        (allow-list, fail closed): a token with the fbx_client_type claim must
+        carry open-finance-tpp; a token without it must come from a client in
+        the configured TPP cohort. Platform service clients (svc-*), the
+        first-party web and mobile clients and any other client are refused
+        with 403. The DPoP proof must carry ath, the base64url SHA-256 of the
+        access token.
   parameters:
     InteractionId:
       name: x-fapi-interaction-id

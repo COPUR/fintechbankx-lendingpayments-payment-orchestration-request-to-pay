@@ -61,6 +61,13 @@ Status: **Proposed** until the Recurring and Bulk Payments Squad merges and rele
 | Event contract | [api/asyncapi/svc-pay-request-to-pay.yaml](api/asyncapi/svc-pay-request-to-pay.yaml) |
 | HTTP contract | [api/openapi/request-to-pay-service.yaml](api/openapi/request-to-pay-service.yaml) (realignment: Proposed [ADR](docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md)) |
 
+TPP admission (allow-list, fail closed): besides `aud` and the `payments` scope, a token must come from a
+client known to be a TPP. With the `fbx_client_type` claim it must be `open-finance-tpp`; without it, the
+client (`azp`, else `client_id`) must be listed in `requesttopay.security.tpp.allowed-clients`
+(environment variable `TPP_ALLOWED_CLIENTS`, comma-separated). Set that list to the TPP clients of the
+gateway cohort `rtp-cutover-cohort`, and change both together. An empty list (the default) admits no
+client without the claim. Service clients (`svc-*`) and the first-party channels are refused either way.
+
 Module layout (layout B): `open-finance-domain` (PayRequest aggregate, events, ports) ← `open-finance-application`
 (use cases) ← `open-finance-infrastructure` (JPA, JDBC idempotency, outbox, REST, security) ← `open-finance-bootstrap`
 (Spring Boot application).

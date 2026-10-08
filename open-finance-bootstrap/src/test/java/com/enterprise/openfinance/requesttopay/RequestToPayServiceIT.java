@@ -81,7 +81,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * pay request goes through its lifecycle over HTTP with its events landing in
  * the outbox and then on (a mocked) Kafka.
  */
-@SpringBootTest(properties = "requesttopay.outbox.relay.enabled=false")
+@SpringBootTest(properties = {"requesttopay.outbox.relay.enabled=false",
+        "requesttopay.security.tpp.allowed-clients=TPP-001,TPP-OTHER"})
 @AutoConfigureMockMvc
 class RequestToPayServiceIT {
 

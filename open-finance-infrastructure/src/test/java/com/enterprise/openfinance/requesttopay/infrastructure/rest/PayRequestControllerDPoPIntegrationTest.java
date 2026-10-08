@@ -228,6 +228,23 @@ class PayRequestControllerDPoPIntegrationTest {
     }
 
     @Test
+    void aTokenFromAnUnknownClientWithoutTheClientTypeClaimIsForbidden() throws Exception {
+        // TPP-UNKNOWN is neither denied nor in requesttopay.security.tpp.allowed-clients.
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-UNKNOWN"));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aListedClientWithoutTheClientTypeClaimIsServed() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void psuIdThatIsNotAnOpaqueReferenceIsAnInvalidRequest() throws Exception {
         token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
         String path = "/open-finance/v1/par";

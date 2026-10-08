@@ -73,11 +73,15 @@ public class SecurityConfig {
     @Value("${requesttopay.security.tpp.client-type:open-finance-tpp}")
     private String tppClientType;
 
+    /** TPP clients admitted without the client-type claim (the gateway's rtp-cutover-cohort); empty admits none. */
+    @Value("${requesttopay.security.tpp.allowed-clients:}")
+    private List<String> allowedClients;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, DPoPValidationService dpopValidationService)
             throws Exception {
         TppClientPolicy tppPolicy = new TppClientPolicy(requiredScope, deniedClientPrefixes, deniedClientIds,
-                clientTypeClaim, tppClientType);
+                clientTypeClaim, tppClientType, allowedClients);
         http
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

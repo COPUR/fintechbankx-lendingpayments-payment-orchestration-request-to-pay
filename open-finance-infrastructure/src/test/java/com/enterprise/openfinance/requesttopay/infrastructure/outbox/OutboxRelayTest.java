@@ -9,6 +9,8 @@ import org.apache.kafka.common.errors.SaslAuthenticationException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
+import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
+import org.springframework.kafka.core.KafkaProducerException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -253,6 +255,55 @@ class OutboxRelayTest {
         verify(kafka, times(1)).send(any(ProducerRecord.class));
         assertThat(lock.released).isTrue();
         assertThat(relay.consecutiveFailedRuns()).isEqualTo(1);
+    }
+
+    /**
+     * Governance ruling: a missing topic (or one the broker does not know yet) is an environment
+     * fault, not a bad payload. The relay stops, marks nothing, backs off, alerts through
+     * outbox.send.failures and resumes once the topic exists. InvalidTopicException (a name the
+     * broker can never accept) stays a payload error.
+     */
+    @Test
+    void anUnknownTopicStopsTheRelayBacksOffAndResumesWithoutParking() {
+        OutboxEventJpaEntity first = row("CONS-1", 0);
+        OutboxEventJpaEntity otherAggregate = row("CONS-2", 0);
+        batch(first, otherAggregate);
+        when(kafka.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.failedFuture(new UnknownTopicOrPartitionException("unknown topic")))
+                .thenReturn(sent());
+
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(first.getStatus()).isEqualTo(OutboxEventJpaEntity.Status.PENDING);
+        assertThat(first.getAttempts()).isZero();
+        assertThat(first.getLastError()).isNull();
+        assertThat(first.getParkedAt()).isNull();
+        assertThat(otherAggregate.getStatus()).isEqualTo(OutboxEventJpaEntity.Status.PENDING);
+        assertThat(failures("UnknownTopicOrPartitionException")).isEqualTo(1.0);
+        assertThat(meters.find("outbox.parked.events").counter()).isNull();
+        assertThat(relay.consecutiveFailedRuns()).isEqualTo(1);
+
+        relay.relayOnce();                       // backing off: nothing sent
+        verify(kafka, times(1)).send(any(ProducerRecord.class));
+
+        clock.advance(Duration.ofSeconds(1));    // topic created; the relay resumes
+        assertThat(relay.relayOnce()).isEqualTo(2);
+        assertThat(first.getStatus()).isEqualTo(OutboxEventJpaEntity.Status.PUBLISHED);
+        assertThat(otherAggregate.getStatus()).isEqualTo(OutboxEventJpaEntity.Status.PUBLISHED);
+        assertThat(relay.consecutiveFailedRuns()).isZero();
+    }
+
+    @Test
+    void anUnknownTopicIsAStopAndAnInvalidTopicIsAPayloadErrorHoweverWrapped() {
+        ProducerRecord<String, String> record = new ProducerRecord<>("t", "v");
+        assertThat(OutboxRelay.classify(new UnknownTopicOrPartitionException("x"))).isEqualTo(OutboxRelay.Failure.STOP);
+        assertThat(OutboxRelay.classify(new java.util.concurrent.ExecutionException(
+                new KafkaProducerException(record, "send failed", new UnknownTopicOrPartitionException("x")))))
+                .isEqualTo(OutboxRelay.Failure.STOP);
+        assertThat(OutboxRelay.classify(new InvalidTopicException("x"))).isEqualTo(OutboxRelay.Failure.PAYLOAD);
+        assertThat(OutboxRelay.classify(new java.util.concurrent.ExecutionException(
+                new KafkaProducerException(record, "send failed", new InvalidTopicException("x")))))
+                .isEqualTo(OutboxRelay.Failure.PAYLOAD);
     }
 
     @Test

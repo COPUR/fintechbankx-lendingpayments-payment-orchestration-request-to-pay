@@ -18,6 +18,10 @@ import java.util.Optional;
  * unique on (tpp_id, idempotency_key). The insert runs in the pay request's
  * transaction: a concurrent duplicate waits on the unique index and then sees
  * the committed first use; a failed create rolls the reservation back.
+ * An expired key (expires_at reached) is deleted first, so the key can be
+ * reused for a new request; the earlier pay request stays. Only this table is
+ * unique on the key: pay_request has no (tpp_id, key) constraint that a reuse
+ * could violate.
  */
 @Component
 public class JdbcPayRequestIdempotencyAdapter implements PayRequestIdempotencyPort {

@@ -258,6 +258,26 @@ class RequestToPayServiceIT {
     }
 
     @Test
+    void anExpiredKeyCanBeReusedForANewRequest() throws Exception {
+        String first = create("idem-expired", "250.00", "ix-exp-1");
+        jdbc.update("update " + SCHEMA + ".pay_request_idempotency set expires_at = now() - interval '1 second' "
+                + "where tpp_id = 'TPP-001' and idempotency_key = 'idem-expired'");
+
+        String response = mvc.perform(createRequest("idem-expired", "999.00", "ix-exp-2"))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("X-Idempotent-Replay", "false"))
+                .andReturn().getResponse().getContentAsString();
+        String second = json.readTree(response).get("Data").get("ConsentId").asText();
+
+        assertThat(second).isNotEqualTo(first);
+        assertThat(count("pay_request")).isEqualTo(2);
+        assertThat(count("pay_request_idempotency")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select consent_id from " + SCHEMA + ".pay_request_idempotency "
+                + "where tpp_id = 'TPP-001' and idempotency_key = 'idem-expired'", String.class)).isEqualTo(second);
+        assertThat(count("outbox_event")).isEqualTo(2);
+    }
+
+    @Test
     void concurrentCreatesWithTheSameKeyProduceOnePayRequest() throws Exception {
         int callers = 8;
         ExecutorService pool = Executors.newFixedThreadPool(callers);

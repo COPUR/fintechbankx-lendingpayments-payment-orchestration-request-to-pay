@@ -18,7 +18,14 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** SQL behaviour is covered against PostgreSQL in RequestToPayServiceIT. */
+/**
+ * Call order and result mapping with a mocked JDBC template. The SQL itself runs against
+ * PostgreSQL in RequestToPayServiceIT: replay and conflict
+ * (retryWithSameKeyReturnsTheFirstRequestAndDifferentPayloadIsAConflict), concurrent first use
+ * (concurrentCreatesWithTheSameKeyProduceOnePayRequest) and reuse of an expired key
+ * (anExpiredKeyCanBeReusedForANewRequest). The 24 h TTL itself is configuration
+ * (openfinance.requesttopay.idempotency.ttl).
+ */
 class JdbcPayRequestIdempotencyAdapterTest {
 
     private static final Instant NOW = Instant.parse("2026-02-10T10:00:00Z");

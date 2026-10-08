@@ -62,6 +62,33 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Guardrail - production change must come with a test change (ADR-029)
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          NO_BEHAVIOUR_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'no-behaviour-change') }}
+        run: |
+          changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          main_changes="$(printf '%s\n' "$changed" | grep -E '(^|/)src/main/' || true)"
+          test_changes="$(printf '%s\n' "$changed" | grep -E '(^|/)src/[A-Za-z]*[Tt]est/' || true)"
+          if [ -z "$main_changes" ]; then
+            echo "No src/main changes; test-first guardrail not applicable."
+            exit 0
+          fi
+          if [ -n "$test_changes" ]; then
+            echo "src/main changes are accompanied by test changes."
+            exit 0
+          fi
+          if [ "$NO_BEHAVIOUR_CHANGE" = "true" ]; then
+            echo "src/main changed without tests; allowed by label no-behaviour-change."
+            exit 0
+          fi
+          echo "This pull request changes src/main without changing any src/*test* sources:"
+          printf '%s\n' "$main_changes"
+          echo "Add the failing test that drove the change, or label the PR no-behaviour-change."
+          exit 1
+
       - name: Set up Java 23
         uses: actions/setup-java@v4
         with:

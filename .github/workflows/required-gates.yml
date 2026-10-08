@@ -148,6 +148,32 @@ jobs:
         if: ${{ hashFiles('api/openapi/*.yaml') != '' }}
         run: ./scripts/ci/fapi-dpop-guard.sh
 
+      # Top-level specs only: api/asyncapi/common/ holds shared fragments, not AsyncAPI documents.
+      - name: AsyncAPI contract validation
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/.npm
+        shell: bash
+        run: |
+          for spec in api/asyncapi/*.yaml; do
+            npx -y @asyncapi/cli@2.13.0 validate "$spec"
+          done
+
+      # ADR-019 section 5 provider gate, the equivalent of cicd-templates 4129ceb's contract-checks
+      # asyncapi job until this repository moves to the shared workflows: the catalog's breaking-change
+      # rules (scripts copied unchanged from asyncapi catalog #10 b0e31ee) against the merge base of
+      # origin/main. Findings are waived only in api/asyncapi/<spec-name>.accepted-breaking.txt.
+      - name: AsyncAPI breaking-change check
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/.npm
+          ASYNCAPI_DIR: api/asyncapi
+          BASE_REF: origin/main
+        shell: bash
+        run: |
+          npm ci --prefix scripts/ci --ignore-scripts --no-audit --no-fund
+          bash scripts/ci/asyncapi-breaking.sh
+
       - name: Guardrail - disallow generic map request payloads
         shell: bash
         run: |

@@ -37,15 +37,22 @@ public class DPoPTestUtils {
     }
 
     public static Jwt createJwtWithCnf(ECKey key) throws Exception {
+        return createJwtWithCnf(key, "TPP-001");
+    }
+
+    /** A DPoP-bound token for {@code azp}; {@code azp == null} gives a token without client identity. */
+    public static Jwt createJwtWithCnf(ECKey key, String azp) throws Exception {
         String jkt = key.computeThumbprint("SHA-256").toString();
         Map<String, Object> cnf = Collections.singletonMap("jkt", jkt);
 
-        return Jwt.withTokenValue("token")
+        Jwt.Builder token = Jwt.withTokenValue("token")
                 .header("alg", "ES256")
                 .claim("sub", "user")
-                .claim("azp", "TPP-001")
                 .claim("scope", "payments")
-                .claim("cnf", cnf)
-                .build();
+                .claim("cnf", cnf);
+        if (azp != null) {
+            token.claim("azp", azp);
+        }
+        return token.build();
     }
 }

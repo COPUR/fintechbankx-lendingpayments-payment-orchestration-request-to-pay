@@ -11,7 +11,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * Runs after bearer-token authentication for /api/** and applies
+ * Runs after token authentication for the TPP-facing /open-finance/** paths and applies
  * {@link DPoPRequestVerifier}. Failures answer 401 with a DPoP challenge.
  */
 public class DPoPProofFilter extends OncePerRequestFilter {
@@ -24,7 +24,7 @@ public class DPoPProofFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith("/api/");
+        return !request.getRequestURI().startsWith("/open-finance/");
     }
 
     @Override
@@ -33,7 +33,7 @@ public class DPoPProofFilter extends OncePerRequestFilter {
         try {
             verifier.verify(request, SecurityContextHolder.getContext().getAuthentication());
         } catch (DPoPValidationException e) {
-            response.setHeader(HttpHeaders.WWW_AUTHENTICATE, "DPoP error=\"invalid_dpop_proof\"");
+            response.setHeader(HttpHeaders.WWW_AUTHENTICATE, DPoPChallenge.INVALID_PROOF);
             response.setContentType("application/json");
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.getWriter().write("{\"code\":\"DPOP_VALIDATION_FAILED\",\"message\":\"Invalid DPoP proof\"}");

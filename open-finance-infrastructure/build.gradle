@@ -41,7 +41,7 @@ dependencies {
         exclude group: 'commons-logging', module: 'commons-logging'
     }
 
-    // OAuth2 resource server, optional DPoP and FAPI headers
+    // OAuth2 resource server, required DPoP and FAPI headers
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     implementation 'com.nimbusds:nimbus-jose-jwt'
     implementation 'org.springframework.boot:spring-boot-starter-aop'

@@ -10,7 +10,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
  * that obtained it ({@code azp}, else {@code client_id}); the
  * x-fapi-financial-id header may repeat it but never override it. Only
  * without an authenticated token (unit tests, never in the running service
- * where every /api path is authenticated) is the header used as is.
+ * where every /open-finance path is authenticated) is the header used as is.
  */
 final class TppIdentity {
 

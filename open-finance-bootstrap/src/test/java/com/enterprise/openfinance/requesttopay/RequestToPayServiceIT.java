@@ -8,6 +8,21 @@ import com.enterprise.openfinance.requesttopay.infrastructure.outbox.OutboxEvent
 import com.enterprise.openfinance.requesttopay.infrastructure.outbox.OutboxRelay;
 import com.enterprise.openfinance.requesttopay.infrastructure.outbox.SpringDataOutboxRepository;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.JdbcDPoPNonceRepository;
+import com.nimbusds.jose.JOSEObjectType;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.ECDSASigner;
+import com.nimbusds.jose.jwk.Curve;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
+import java.util.Date;
+import java.util.UUID;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -47,7 +62,6 @@ import java.util.concurrent.Future;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -87,6 +101,22 @@ class RequestToPayServiceIT {
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired JdbcDPoPNonceRepository dpopJti;
+    @MockBean JwtDecoder jwtDecoder;
+
+    private static final ECKey TPP_KEY = newKey();
+
+    private static ECKey newKey() {
+        try {
+            return new ECKeyGenerator(Curve.P_256).generate();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @BeforeEach
+    void tokensAreBoundToTheTppKey() {
+        when(jwtDecoder.decode(any())).thenAnswer(call -> boundToken(call.getArgument(0)));
+    }
 
     @BeforeEach
     void cleanTables() {
@@ -111,16 +141,16 @@ class RequestToPayServiceIT {
     void lifecycleOverHttpPersistsStateAndWritesEveryEventToTheOutbox() throws Exception {
         String consentId = create("idem-life", "500.00", "ix-create");
 
-        mvc.perform(asTpp(get("/api/v1/pay-requests/{id}", consentId)).header("X-FAPI-Interaction-ID", "ix-get"))
+        mvc.perform(asTpp(get("/open-finance/v1/payment-consents/{id}", consentId)).header("X-FAPI-Interaction-ID", "ix-get"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.Data.Status").value("AwaitingAuthorisation"));
-        mvc.perform(asTpp(post("/api/v1/pay-requests/{id}/accept", consentId))
+        mvc.perform(asTpp(post("/open-finance/v1/payment-consents/{id}/accept", consentId))
                         .header("X-FAPI-Interaction-ID", "ix-accept")
                         .contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\": \"PAY-777\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.Data.Status").value("Consumed"))
                 .andExpect(jsonPath("$.Data.PaymentId").value("PAY-777"));
-        mvc.perform(asTpp(post("/api/v1/pay-requests/{id}/reject", consentId))
+        mvc.perform(asTpp(post("/open-finance/v1/payment-consents/{id}/reject", consentId))
                         .header("X-FAPI-Interaction-ID", "ix-reject")
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
@@ -151,12 +181,12 @@ class RequestToPayServiceIT {
     void anotherTppCannotReadOrDecideTheRequest() throws Exception {
         String consentId = create("idem-own", "10.00", "ix-own");
 
-        mvc.perform(get("/api/v1/pay-requests/{id}", consentId)
-                        .with(jwt().jwt(j -> j.claim("azp", "TPP-OTHER")))
+        mvc.perform(get("/open-finance/v1/payment-consents/{id}", consentId)
+                        .with(dpop("TPP-OTHER"))
                         .header("X-FAPI-Interaction-ID", "ix"))
                 .andExpect(status().isForbidden());
-        mvc.perform(post("/api/v1/pay-requests/{id}/reject", consentId)
-                        .with(jwt().jwt(j -> j.claim("azp", "TPP-OTHER")))
+        mvc.perform(post("/open-finance/v1/payment-consents/{id}/reject", consentId)
+                        .with(dpop("TPP-OTHER"))
                         .header("X-FAPI-Interaction-ID", "ix")
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isForbidden());
@@ -255,8 +285,35 @@ class RequestToPayServiceIT {
     }
 
     @Test
+    void bearerSchemeOnTheTppPathIsUnauthorizedAndStoresNothing() throws Exception {
+        mvc.perform(createRequest("idem-bearer", "5.00", "ix-bearer")
+                        .with(request -> {
+                            request.removeHeader("Authorization");
+                            request.addHeader("Authorization", "Bearer TPP-001");
+                            return request;
+                        }))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", org.hamcrest.Matchers.startsWith("DPoP")));
+        assertThat(count("pay_request")).isZero();
+    }
+
+    @Test
+    void aReplayedProofIsUnauthorized() throws Exception {
+        String consentId = create("idem-replay-proof", "5.00", "ix-rp");
+        String url = "http://localhost/open-finance/v1/payment-consents/" + consentId;
+        String proof = proof("GET", url);
+
+        mvc.perform(get("/open-finance/v1/payment-consents/{id}", consentId).header("X-FAPI-Interaction-ID", "ix-rp1")
+                        .header("Authorization", "DPoP TPP-001").header("DPoP", proof))
+                .andExpect(status().isOk());
+        mvc.perform(get("/open-finance/v1/payment-consents/{id}", consentId).header("X-FAPI-Interaction-ID", "ix-rp2")
+                        .header("Authorization", "DPoP TPP-001").header("DPoP", proof))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void interactionIdMustBeASafeToken() throws Exception {
-        mvc.perform(asTpp(post("/api/v1/pay-requests"))
+        mvc.perform(asTpp(post("/open-finance/v1/par"))
                         .header("X-FAPI-Interaction-ID", "ix-1,ix-2 <script>")
                         .header("X-Idempotency-Key", "idem-bad")
                         .contentType(MediaType.APPLICATION_JSON).content(BODY.formatted("1.00")))
@@ -297,7 +354,7 @@ class RequestToPayServiceIT {
     }
 
     private MockHttpServletRequestBuilder createRequest(String key, String amount, String interactionId) {
-        return asTpp(post("/api/v1/pay-requests"))
+        return asTpp(post("/open-finance/v1/par"))
                 .header("X-FAPI-Interaction-ID", interactionId)
                 .header("X-Idempotency-Key", key)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -305,7 +362,45 @@ class RequestToPayServiceIT {
     }
 
     private static MockHttpServletRequestBuilder asTpp(MockHttpServletRequestBuilder request) {
-        return request.with(jwt().jwt(j -> j.subject("tpp-user").claim("azp", "TPP-001")));
+        return request.with(dpop("TPP-001"));
+    }
+
+    /**
+     * Authorization: DPoP with a fresh proof for this request's method and URL, signed by
+     * TPP_KEY. The token value names the TPP; the mocked decoder turns it into a token bound
+     * to TPP_KEY (cnf.jkt), so the real filter, proof validation and jti store all run.
+     */
+    private static RequestPostProcessor dpop(String tppId) {
+        return request -> {
+            request.addHeader("Authorization", "DPoP " + tppId);
+            request.addHeader("DPoP", proof(request.getMethod(), request.getRequestURL().toString()));
+            return request;
+        };
+    }
+
+    private static String proof(String method, String url) {
+        try {
+            SignedJWT proof = new SignedJWT(
+                    new JWSHeader.Builder(JWSAlgorithm.ES256).type(new JOSEObjectType("dpop+jwt"))
+                            .jwk(TPP_KEY.toPublicJWK()).build(),
+                    new JWTClaimsSet.Builder().jwtID(UUID.randomUUID().toString()).issueTime(new Date())
+                            .claim("htm", method).claim("htu", url).build());
+            proof.sign(new ECDSASigner(TPP_KEY));
+            return proof.serialize();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static Jwt boundToken(String tppId) {
+        try {
+            return Jwt.withTokenValue(tppId).header("alg", "PS256").subject("tpp-user")
+                    .claim("azp", tppId).audience(List.of("svc-pay-request-to-pay"))
+                    .claim("cnf", Map.of("jkt", TPP_KEY.computeThumbprint("SHA-256").toString()))
+                    .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private long count(String table) {

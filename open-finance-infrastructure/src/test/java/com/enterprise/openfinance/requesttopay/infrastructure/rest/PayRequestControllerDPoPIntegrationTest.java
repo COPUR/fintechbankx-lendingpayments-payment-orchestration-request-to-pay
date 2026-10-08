@@ -30,22 +30,29 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 
+import static org.hamcrest.Matchers.startsWith;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * TPP endpoints under /open-finance/v1 require the DPoP scheme, a valid proof
+ * (htm, htu, iat, unique jti) and a token whose cnf.jkt matches the proof key
+ * (platform contract: "DPoP applies by caller, not by namespace").
+ */
 @SpringBootTest(
         classes = PayRequestControllerDPoPIntegrationTest.TestApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.MOCK,
@@ -53,7 +60,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 )
 @AutoConfigureMockMvc
 class PayRequestControllerDPoPIntegrationTest {
-    private static final String BASE_URL = "/api/v1/pay-requests/";
+
+    private static final String STATUS_PATH = "/open-finance/v1/payment-consents/consent-123";
 
     @Autowired
     private MockMvc mockMvc;
@@ -77,118 +85,84 @@ class PayRequestControllerDPoPIntegrationTest {
     }
 
     @Test
-    void getPayRequestStatus_withValidDPoPAndJwt_shouldReturnOk() throws Exception {
-        String consentId = "consent-123";
-        String path = BASE_URL + consentId;
-        String fullUrl = "http://localhost" + path;
-        
-        String dpopProof = DPoPTestUtils.createDPoPProof(dpopKey, HttpMethod.GET, fullUrl);
-        Jwt jwtToken = DPoPTestUtils.createJwtWithCnf(dpopKey);
+    void dpopSchemeWithBoundTokenAndValidProofIsServed() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
 
-        when(jwtDecoder.decode(any())).thenReturn(jwtToken);
-        mockMvc.perform(get(path)
-                        .with(jwt().jwt(jwtToken))
-                        .header("DPoP", dpopProof)
-                        .header("X-FAPI-Interaction-ID", "interaction-123")
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk());
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.Links.Self").value(STATUS_PATH));
     }
 
     @Test
-    void getPayRequestStatus_withInvalidDPoP_shouldReturnUnauthorized() throws Exception {
-        String consentId = "consent-123";
-        String path = BASE_URL + consentId;
-        
-        // DPoP proof for a different URL
-        String dpopProof = DPoPTestUtils.createDPoPProof(dpopKey, HttpMethod.GET, "http://localhost/api/v1/other");
-        Jwt jwtToken = DPoPTestUtils.createJwtWithCnf(dpopKey);
+    void bearerSchemeIsUnauthorizedEvenWithAValidProof() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
 
-        when(jwtDecoder.decode(any())).thenReturn(jwtToken);
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "Bearer token"), STATUS_PATH))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", startsWith("DPoP")));
+    }
 
-        mockMvc.perform(get(path)
-                        .with(jwt().jwt(jwtToken))
-                        .header("DPoP", dpopProof)
-                        .header("X-FAPI-Interaction-ID", "interaction-123")
-                        .contentType(MediaType.APPLICATION_JSON))
+    @Test
+    void missingProofIsUnauthorized() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
+
+        mockMvc.perform(get(STATUS_PATH).header("Authorization", "DPoP token")
+                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", startsWith("DPoP")))
+                .andExpect(jsonPath("$.code").value("DPOP_VALIDATION_FAILED"));
+    }
+
+    @Test
+    void tokenWithoutCnfIsUnauthorized() throws Exception {
+        token(Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
+                .claim("azp", "TPP-001").build());
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void getPayRequestStatus_withMismatchedCnf_shouldReturnUnauthorized() throws Exception {
-        String consentId = "consent-123";
-        String path = BASE_URL + consentId;
-        String fullUrl = "http://localhost" + path;
-        
-        String dpopProof = DPoPTestUtils.createDPoPProof(dpopKey, HttpMethod.GET, fullUrl);
-
-        // Create a JWT with a cnf claim that doesn't match the DPoP key
+    void proofFromAnotherKeyThanTheTokenBindingIsUnauthorized() throws Exception {
         ECKey otherKey = new ECKeyGenerator(Curve.P_256).generate();
-        Jwt jwtToken = DPoPTestUtils.createJwtWithCnf(otherKey);
+        token(DPoPTestUtils.createJwtWithCnf(otherKey, "TPP-001"));
 
-        when(jwtDecoder.decode(any())).thenReturn(jwtToken);
-
-        mockMvc.perform(get(path)
-                        .with(jwt().jwt(jwtToken))
-                        .header("DPoP", dpopProof)
-                        .header("X-FAPI-Interaction-ID", "interaction-123")
-                        .contentType(MediaType.APPLICATION_JSON))
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void dpopBoundTokenWithoutProofIsUnauthorized() throws Exception {
-        Jwt jwtToken = DPoPTestUtils.createJwtWithCnf(dpopKey);
+    void proofForAnotherUrlIsUnauthorized() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
 
-        mockMvc.perform(get(BASE_URL + "consent-123")
-                        .with(jwt().jwt(jwtToken))
-                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"),
+                        "/open-finance/v1/payment-consents/other"))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void plainBearerTokenWithoutProofIsAcceptedBecauseDpopIsOptional() throws Exception {
-        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
-                .claim("azp", "TPP-001").build();
+    void replayedProofIsUnauthorized() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
+        when(dpopNonceRepository.saveJtiIfAbsent(anyString(), anyLong())).thenReturn(false);
 
-        mockMvc.perform(get(BASE_URL + "consent-123")
-                        .with(jwt().jwt(jwtToken))
-                        .header("X-FAPI-Interaction-ID", "interaction-123"))
-                .andExpect(status().isOk());
-    }
-
-    @Test
-    void proofWithPlainBearerTokenIsUnauthorized() throws Exception {
-        String path = BASE_URL + "consent-123";
-        String dpopProof = DPoPTestUtils.createDPoPProof(dpopKey, HttpMethod.GET, "http://localhost" + path);
-        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
-                .claim("azp", "TPP-001").build();
-
-        mockMvc.perform(get(path)
-                        .with(jwt().jwt(jwtToken))
-                        .header("DPoP", dpopProof)
-                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
     void financialIdHeaderNamingAnotherTppIsForbidden() throws Exception {
-        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
-                .claim("azp", "TPP-001").build();
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
 
-        mockMvc.perform(get(BASE_URL + "consent-123")
-                        .with(jwt().jwt(jwtToken))
-                        .header("x-fapi-financial-id", "TPP-OTHER")
-                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH)
+                        .header("x-fapi-financial-id", "TPP-OTHER"))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void tokenWithoutClientIdentityIsForbidden() throws Exception {
-        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "someone").build();
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, null));
 
-        mockMvc.perform(get(BASE_URL + "consent-123")
-                        .with(jwt().jwt(jwtToken))
-                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
                 .andExpect(status().isForbidden());
     }
 
@@ -196,21 +170,39 @@ class PayRequestControllerDPoPIntegrationTest {
     void readingAnotherTppsPayRequestIsForbidden() throws Exception {
         when(payRequestUseCase.getPayRequestStatus(any()))
                 .thenThrow(new PayRequestAccessDeniedException("Pay request participant mismatch"));
-        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
-                .claim("azp", "TPP-OTHER").build();
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-OTHER"));
 
-        mockMvc.perform(get(BASE_URL + "consent-123")
-                        .with(jwt().jwt(jwtToken))
-                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void requestWithoutTokenIsUnauthorizedAndUnknownPathsAreDenied() throws Exception {
-        mockMvc.perform(get(BASE_URL + "consent-123").header("X-FAPI-Interaction-ID", "interaction-123"))
-                .andExpect(status().isUnauthorized());
-        mockMvc.perform(get("/internal/anything").with(jwt()))
+    void requestWithoutTokenGetsADpopChallenge() throws Exception {
+        mockMvc.perform(get(STATUS_PATH).header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", startsWith("DPoP")));
+    }
+
+    @Test
+    void oldInternalPrefixAndUnknownPathsAreDenied() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
+        String oldPath = "/api/v1/pay-requests/consent-123";
+
+        mockMvc.perform(withProof(get(oldPath).header("Authorization", "DPoP token"), oldPath))
                 .andExpect(status().isForbidden());
+        mockMvc.perform(get("/internal/anything").header("Authorization", "DPoP token"))
+                .andExpect(status().isForbidden());
+    }
+
+    private void token(Jwt jwt) {
+        when(jwtDecoder.decode(any())).thenReturn(jwt);
+    }
+
+    private MockHttpServletRequestBuilder withProof(MockHttpServletRequestBuilder request, String proofPath)
+            throws Exception {
+        return request
+                .header("DPoP", DPoPTestUtils.createDPoPProof(dpopKey, HttpMethod.GET, "http://localhost" + proofPath))
+                .header("X-FAPI-Interaction-ID", "interaction-123");
     }
 
     private static PayRequest sampleRequest() {

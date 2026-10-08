@@ -24,8 +24,11 @@ import java.util.concurrent.TimeUnit;
 
 @RestController
 @Validated
-@RequestMapping("/api/v1/pay-requests")
+@RequestMapping("/open-finance/v1")
 public class PayRequestController {
+
+    /** TPP-facing paths, kept as in the monolith; DPoP is required on all of them. */
+    static final String SELF_PREFIX = "/open-finance/v1/payment-consents/";
 
     /** x-fapi-interaction-id becomes the event correlationId: a single safe token, at most 128 characters. */
     static final String INTERACTION_ID = "^[A-Za-z0-9._:-]{1,128}$";
@@ -36,7 +39,7 @@ public class PayRequestController {
         this.useCase = useCase;
     }
 
-    @PostMapping
+    @PostMapping("/par")
     @DPoPSecured
     @FAPISecured
     public ResponseEntity<PayRequestResponse> createPayRequest(
@@ -49,7 +52,7 @@ public class PayRequestController {
         // (same consent id, no new events); a different payload is 409.
         String tppId = TppIdentity.resolve(financialId);
         var result = useCase.createPayRequest(request.toCommand(tppId, interactionId, idempotencyKey));
-        String self = "/api/v1/pay-requests/" + result.request().consentId();
+        String self = SELF_PREFIX + result.request().consentId();
 
         return ResponseEntity.created(java.net.URI.create(self))
                 .cacheControl(CacheControl.maxAge(0, TimeUnit.SECONDS).noStore())
@@ -59,7 +62,7 @@ public class PayRequestController {
                 .body(PayRequestResponse.from(result, self));
     }
 
-    @GetMapping("/{consentId}")
+    @GetMapping("/payment-consents/{consentId}")
     @DPoPSecured
     @FAPISecured
     public ResponseEntity<PayRequestStatusResponse> getPayRequestStatus(
@@ -71,7 +74,7 @@ public class PayRequestController {
         String tppId = TppIdentity.resolve(financialId);
 
         var result = useCase.getPayRequestStatus(new GetPayRequestStatusQuery(consentId, tppId, interactionId));
-        String self = "/api/v1/pay-requests/" + consentId;
+        String self = SELF_PREFIX + consentId;
         PayRequestStatusResponse response = PayRequestStatusResponse.from(result, self);
         String etag = generateEtag(response.data().toString());
 
@@ -91,7 +94,7 @@ public class PayRequestController {
                 .body(response);
     }
 
-    @PostMapping("/{consentId}/accept")
+    @PostMapping("/payment-consents/{consentId}/accept")
     @DPoPSecured
     @FAPISecured
     public ResponseEntity<PayRequestStatusResponse> acceptPayRequest(
@@ -104,7 +107,7 @@ public class PayRequestController {
 
         String paymentId = decision == null ? null : decision.paymentId();
         var result = useCase.acceptPayRequest(consentId, tppId, paymentId, interactionId);
-        String self = "/api/v1/pay-requests/" + consentId;
+        String self = SELF_PREFIX + consentId;
 
         return ResponseEntity.status(HttpStatus.CREATED)
                 .cacheControl(CacheControl.maxAge(0, TimeUnit.SECONDS).noStore())
@@ -112,7 +115,7 @@ public class PayRequestController {
                 .body(PayRequestStatusResponse.from(result, self));
     }
 
-    @PostMapping("/{consentId}/reject")
+    @PostMapping("/payment-consents/{consentId}/reject")
     @DPoPSecured
     @FAPISecured
     public ResponseEntity<PayRequestStatusResponse> rejectPayRequest(
@@ -124,7 +127,7 @@ public class PayRequestController {
         String tppId = TppIdentity.resolve(financialId);
 
         var result = useCase.rejectPayRequest(consentId, tppId, interactionId);
-        String self = "/api/v1/pay-requests/" + consentId;
+        String self = SELF_PREFIX + consentId;
 
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.maxAge(0, TimeUnit.SECONDS).noStore())

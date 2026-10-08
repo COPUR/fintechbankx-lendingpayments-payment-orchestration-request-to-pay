@@ -1,6 +1,7 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.config;
 
 import com.enterprise.openfinance.requesttopay.infrastructure.security.AudienceValidator;
+import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPChallenge;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPProofFilter;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPRequestVerifier;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationService;
@@ -34,9 +35,11 @@ import java.util.Map;
 
 /**
  * Stateless OAuth2 resource server for the platform Keycloak realm.
- * Tokens must carry this service in {@code aud}; DPoP-bound tokens and DPoP
- * proofs are verified when present (DPoP is optional for this service).
- * Everything outside /api/v1/pay-requests and the actuator probes is denied.
+ * Every endpoint is TPP-facing (/open-finance/v1, monolith paths) and needs a
+ * DPoP-bound token: {@code Authorization: DPoP}, a valid proof with a unique jti,
+ * {@code cnf.jkt} matching the proof key, and this service in {@code aud}.
+ * There is no internal /api/v1 surface: no caller exists.
+ * Everything outside those paths and the actuator probes is denied.
  */
 @Configuration
 @EnableWebSecurity
@@ -59,10 +62,12 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authorize -> authorize
                 .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
-                .requestMatchers("/api/v1/pay-requests/**", "/api/v1/pay-requests").authenticated()
+                .requestMatchers("/open-finance/v1/par", "/open-finance/v1/payment-consents/**").authenticated()
                 .anyRequest().denyAll()
             )
+            .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(new DPoPChallenge()))
             .oauth2ResourceServer(oauth2 -> oauth2
+                .authenticationEntryPoint(new DPoPChallenge())
                 .bearerTokenResolver(new DpopAwareBearerTokenResolver())
                 .jwt(jwt -> {
                     jwt.decoder(jwtDecoder());

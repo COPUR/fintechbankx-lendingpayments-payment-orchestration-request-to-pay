@@ -60,9 +60,10 @@ back to, so there is nothing to replay.
 - [x] Events written through a transactional outbox, relayed in order with one active relay; poison rows parked after max attempts
 - [x] Idempotent create (`x-idempotency-key`, unique per TPP in the database, concurrent race tested)
 - [x] Concurrent accept and reject serialised (row lock and optimistic version)
-- [x] Token audience validated; TPP identity taken from the token; DPoP verified when used
+- [x] Token audience validated; TPP identity taken from the token; DPoP required on every TPP path (`/open-finance/v1`)
 - [x] Container image, Helm chart and Terraform checked in CI (`Deployability` workflow)
 - [ ] Topics created on the platform cluster
 - [ ] Keycloak audience mapper and mesh ALLOW rule in place
-- [ ] OpenAPI paths aligned with the controller (`/par` in the spec, `/api/v1/pay-requests` in the code; owner decision)
+- [x] OpenAPI aligned with the controller (monolith paths under `/open-finance/v1`)
+- [ ] Contract owner accepts the OpenAPI breaking changes against `main` (oasdiff: removed never-served `/par/{requestId}` paths, new required `PsuId`/`InstructedAmount`, interaction-id pattern)
 - [ ] Monolith `requesttopay` package removed

@@ -2,6 +2,7 @@ package com.enterprise.openfinance.requesttopay.infrastructure.security;
 
 import com.nimbusds.jose.jwk.JWK;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -11,22 +12,23 @@ import java.net.URISyntaxException;
 import java.util.Map;
 
 /**
- * Optional DPoP (RFC 9449) for the request-to-pay API. DPoP is not mandatory
- * for this payments service (platform contract addendum 2026-10-08), but when
- * it is used it is verified completely:
+ * DPoP (RFC 9449) for the TPP-facing request-to-pay API. Platform contract
+ * ("DPoP applies by caller, not by namespace"): every endpoint a TPP calls
+ * requires
  * <ul>
- *   <li>a DPoP proof header is validated (signature with the embedded JWK,
- *       typ, alg, htm, htu, iat window, jti replay) and must match the
- *       access token's {@code cnf.jkt};</li>
- *   <li>a DPoP-bound access token ({@code cnf.jkt}) without a proof is refused;</li>
- *   <li>a plain bearer token without a proof is accepted.</li>
+ *   <li>the {@code Authorization: DPoP <token>} scheme (Bearer is refused);</li>
+ *   <li>a DPoP proof header, validated for signature with the embedded JWK,
+ *       typ, alg, htm, htu, iat window and jti replay;</li>
+ *   <li>an access token whose {@code cnf.jkt} equals the proof key's thumbprint.</li>
  * </ul>
+ * The token's {@code aud} is checked by the JWT decoder.
  * The result is stored on the request, so the filter and the
  * {@code @DPoPSecured} aspect verify each request once.
  */
 public class DPoPRequestVerifier {
 
     public static final String DPOP_JWK_REQUEST_ATTRIBUTE = "dpop_jwk";
+    private static final String DPOP_SCHEME = "DPoP ";
     static final String VERIFIED_ATTRIBUTE = DPoPRequestVerifier.class.getName() + ".verified";
 
     private final DPoPValidationService validationService;
@@ -42,26 +44,23 @@ public class DPoPRequestVerifier {
         if (request.getAttribute(VERIFIED_ATTRIBUTE) != null) {
             return;
         }
-        String proof = request.getHeader("DPoP");
-        String boundThumbprint = boundThumbprint(authentication);
-
-        if (proof == null || proof.isBlank()) {
-            if (boundThumbprint != null) {
-                throw new DPoPValidationException("DPoP proof is required for a DPoP-bound access token");
-            }
-            request.setAttribute(VERIFIED_ATTRIBUTE, Boolean.TRUE);
-            return;
+        String authorization = request.getHeader(HttpHeaders.AUTHORIZATION);
+        if (authorization == null || !authorization.regionMatches(true, 0, DPOP_SCHEME, 0, DPOP_SCHEME.length())) {
+            throw new DPoPValidationException("Authorization scheme must be DPoP");
         }
+        String proof = request.getHeader("DPoP");
+        if (proof == null || proof.isBlank()) {
+            throw new DPoPValidationException("DPoP proof is required");
+        }
+        String boundThumbprint = boundThumbprint(authentication);
 
         JWK proofKey = validationService.validateDPoPProof(proof, HttpMethod.valueOf(request.getMethod()),
                 requestUri(request));
-        if (authentication instanceof JwtAuthenticationToken) {
-            if (boundThumbprint == null) {
-                throw new DPoPValidationException("Access token 'cnf' claim with 'jkt' is missing");
-            }
-            if (!boundThumbprint.equals(thumbprint(proofKey))) {
-                throw new DPoPValidationException("DPoP JWK thumbprint does not match access token 'cnf' claim");
-            }
+        if (boundThumbprint == null) {
+            throw new DPoPValidationException("Access token 'cnf' claim with 'jkt' is missing");
+        }
+        if (!boundThumbprint.equals(thumbprint(proofKey))) {
+            throw new DPoPValidationException("DPoP JWK thumbprint does not match access token 'cnf' claim");
         }
         request.setAttribute(DPOP_JWK_REQUEST_ATTRIBUTE, proofKey);
         request.setAttribute(VERIFIED_ATTRIBUTE, Boolean.TRUE);

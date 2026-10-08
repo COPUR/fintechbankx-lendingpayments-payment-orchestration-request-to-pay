@@ -2,7 +2,7 @@ package com.enterprise.openfinance.requesttopay.application;
 
 import com.enterprise.openfinance.requesttopay.domain.command.CreatePayRequestCommand;
 import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
-import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.model.IdempotencyRecord;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
@@ -144,14 +144,14 @@ public class PayRequestService implements PayRequestUseCase {
         return PayRequestResult.replayOf(original);
     }
 
-    /** An unknown id is refused exactly like another TPP's pay request, so ids cannot be probed. */
-    private static PayRequestAccessDeniedException notFound() {
-        return new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.NOT_FOUND);
+    /** An unknown id is answered exactly like another TPP's pay request (ADR-025 item 5), so ids cannot be probed. */
+    private static PayRequestNotFoundException notFound() {
+        return new PayRequestNotFoundException(PayRequestNotFoundException.Reason.NOT_FOUND);
     }
 
     private static void ensureOwnership(PayRequest request, String tppId) {
         if (!request.belongsTo(tppId)) {
-            throw new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.OTHER_TPP);
+            throw new PayRequestNotFoundException(PayRequestNotFoundException.Reason.OTHER_TPP);
         }
     }
 

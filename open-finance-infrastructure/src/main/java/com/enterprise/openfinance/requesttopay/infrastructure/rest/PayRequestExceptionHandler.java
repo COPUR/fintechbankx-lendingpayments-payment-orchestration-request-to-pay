@@ -1,7 +1,7 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
 import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
-import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationException;
@@ -43,14 +43,17 @@ public class PayRequestExceptionHandler {
                 .body(PayRequestErrorResponse.of("REQUEST_FINALIZED", exception.getMessage(), interactionId(request)));
     }
 
-    /** One body for an unknown pay request and another TPP's; the reason goes to the log only. */
-    @ExceptionHandler(PayRequestAccessDeniedException.class)
-    public ResponseEntity<PayRequestErrorResponse> handlePayRequestNotAccessible(PayRequestAccessDeniedException exception,
-                                                                                HttpServletRequest request) {
+    /**
+     * One 404 body for an unknown pay request and another TPP's (ADR-025 item 5); the reason
+     * goes to the log only.
+     */
+    @ExceptionHandler(PayRequestNotFoundException.class)
+    public ResponseEntity<PayRequestErrorResponse> handlePayRequestNotFound(PayRequestNotFoundException exception,
+                                                                           HttpServletRequest request) {
         String interactionId = interactionId(request);
         log.info("Pay request refused: reason={} interactionId={}", exception.reason(), interactionId);
-        return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(PayRequestErrorResponse.of("FORBIDDEN", PayRequestAccessDeniedException.MESSAGE, interactionId));
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(PayRequestErrorResponse.of("NOT_FOUND", PayRequestNotFoundException.MESSAGE, interactionId));
     }
 
     @ExceptionHandler(AccessDeniedException.class)

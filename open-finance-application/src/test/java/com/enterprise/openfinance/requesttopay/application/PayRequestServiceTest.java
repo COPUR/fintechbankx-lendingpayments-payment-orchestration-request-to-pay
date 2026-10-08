@@ -7,7 +7,7 @@ import com.enterprise.openfinance.requesttopay.domain.event.PayRequestCreatedEve
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestDomainEvent;
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestRejectedEvent;
 import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
-import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.model.IdempotencyRecord;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
@@ -114,11 +114,11 @@ class PayRequestServiceTest {
         when(cachePort.getStatus(any(), any())).thenReturn(Optional.empty());
         when(repositoryPort.findByConsentId("CONS-404")).thenReturn(Optional.empty());
 
-        // An unknown pay request is refused like another TPP's (one 403, no id probing).
+        // An unknown pay request is refused like another TPP's (one 404, no id probing; ADR-025 item 5).
         assertThatThrownBy(() -> service.getPayRequestStatus(new GetPayRequestStatusQuery("CONS-404", "TPP-001", "ix")))
-                .isInstanceOf(PayRequestAccessDeniedException.class)
-                .hasMessage("Pay request not found or not authorised")
-                .extracting("reason").isEqualTo(PayRequestAccessDeniedException.Reason.NOT_FOUND);
+                .isInstanceOf(PayRequestNotFoundException.class)
+                .hasMessage("Pay request not found")
+                .extracting("reason").isEqualTo(PayRequestNotFoundException.Reason.NOT_FOUND);
     }
 
     @Test
@@ -137,9 +137,9 @@ class PayRequestServiceTest {
         when(repositoryPort.findByConsentId("CONS-001")).thenReturn(Optional.of(request));
 
         assertThatThrownBy(() -> service.getPayRequestStatus(new GetPayRequestStatusQuery("CONS-001", "TPP-XYZ", "ix")))
-                .isInstanceOf(PayRequestAccessDeniedException.class)
-                .hasMessage("Pay request not found or not authorised")
-                .extracting("reason").isEqualTo(PayRequestAccessDeniedException.Reason.OTHER_TPP);
+                .isInstanceOf(PayRequestNotFoundException.class)
+                .hasMessage("Pay request not found")
+                .extracting("reason").isEqualTo(PayRequestNotFoundException.Reason.OTHER_TPP);
     }
 
     @Test
@@ -233,9 +233,9 @@ class PayRequestServiceTest {
         when(repositoryPort.findByConsentIdForUpdate("CONS-404")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.acceptPayRequest("CONS-404", "TPP-001", "PAY-1", null, "ix"))
-                .isInstanceOf(PayRequestAccessDeniedException.class)
-                .hasMessage("Pay request not found or not authorised")
-                .extracting("reason").isEqualTo(PayRequestAccessDeniedException.Reason.NOT_FOUND);
+                .isInstanceOf(PayRequestNotFoundException.class)
+                .hasMessage("Pay request not found")
+                .extracting("reason").isEqualTo(PayRequestNotFoundException.Reason.NOT_FOUND);
         verify(eventPublisher, never()).publish(any(), anyList(), any());
     }
 
@@ -244,9 +244,9 @@ class PayRequestServiceTest {
         when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(baseRequest()));
 
         assertThatThrownBy(() -> service.rejectPayRequest("CONS-001", "TPP-XYZ", null, "ix"))
-                .isInstanceOf(PayRequestAccessDeniedException.class)
-                .hasMessage("Pay request not found or not authorised")
-                .extracting("reason").isEqualTo(PayRequestAccessDeniedException.Reason.OTHER_TPP);
+                .isInstanceOf(PayRequestNotFoundException.class)
+                .hasMessage("Pay request not found")
+                .extracting("reason").isEqualTo(PayRequestNotFoundException.Reason.OTHER_TPP);
         verify(repositoryPort, never()).save(any());
     }
 

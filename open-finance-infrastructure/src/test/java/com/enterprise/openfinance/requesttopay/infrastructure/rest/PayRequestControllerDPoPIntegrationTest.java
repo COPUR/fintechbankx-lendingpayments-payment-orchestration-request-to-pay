@@ -1,6 +1,6 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
-import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestStatus;
@@ -265,13 +265,15 @@ class PayRequestControllerDPoPIntegrationTest {
     }
 
     @Test
-    void readingAnotherTppsPayRequestIsForbidden() throws Exception {
+    void readingAnotherTppsPayRequestIsNotFound() throws Exception {
         when(payRequestUseCase.getPayRequestStatus(any()))
-                .thenThrow(new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.OTHER_TPP));
+                .thenThrow(new PayRequestNotFoundException(PayRequestNotFoundException.Reason.OTHER_TPP));
         token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-OTHER"));
 
         mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.message").value("Pay request not found"));
     }
 
     @Test

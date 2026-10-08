@@ -1,7 +1,7 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
 import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
-import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestErrorResponse;
@@ -92,12 +92,12 @@ class PayRequestExceptionHandlerTest {
     }
 
     @Test
-    void shouldMapOwnershipAndClientMismatchToForbidden() {
+    void shouldMapOwnershipToNotFoundAndClientMismatchToForbidden() {
         MockHttpServletRequest request = new MockHttpServletRequest();
 
-        assertThat(handler.handlePayRequestNotAccessible(
-                new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.OTHER_TPP), request)
-                .getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(handler.handlePayRequestNotFound(
+                new PayRequestNotFoundException(PayRequestNotFoundException.Reason.OTHER_TPP), request)
+                .getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(handler.handleForbidden(new AccessDeniedException("header"), request).getBody().code())
                 .isEqualTo("FORBIDDEN");
     }
@@ -107,14 +107,14 @@ class PayRequestExceptionHandlerTest {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader("X-FAPI-Interaction-ID", "ix-probe");
 
-        ResponseEntity<PayRequestErrorResponse> unknown = handler.handlePayRequestNotAccessible(
-                new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.NOT_FOUND), request);
-        ResponseEntity<PayRequestErrorResponse> notOwned = handler.handlePayRequestNotAccessible(
-                new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.OTHER_TPP), request);
+        ResponseEntity<PayRequestErrorResponse> unknown = handler.handlePayRequestNotFound(
+                new PayRequestNotFoundException(PayRequestNotFoundException.Reason.NOT_FOUND), request);
+        ResponseEntity<PayRequestErrorResponse> notOwned = handler.handlePayRequestNotFound(
+                new PayRequestNotFoundException(PayRequestNotFoundException.Reason.OTHER_TPP), request);
 
-        assertThat(unknown.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN).isEqualTo(notOwned.getStatusCode());
-        assertThat(unknown.getBody().code()).isEqualTo("FORBIDDEN").isEqualTo(notOwned.getBody().code());
-        assertThat(unknown.getBody().message()).isEqualTo("Pay request not found or not authorised")
+        assertThat(unknown.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND).isEqualTo(notOwned.getStatusCode());
+        assertThat(unknown.getBody().code()).isEqualTo("NOT_FOUND").isEqualTo(notOwned.getBody().code());
+        assertThat(unknown.getBody().message()).isEqualTo("Pay request not found")
                 .isEqualTo(notOwned.getBody().message());
     }
 

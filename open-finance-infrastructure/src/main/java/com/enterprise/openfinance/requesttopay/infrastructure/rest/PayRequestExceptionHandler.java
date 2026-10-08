@@ -17,6 +17,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
@@ -102,6 +103,14 @@ public class PayRequestExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<PayRequestErrorResponse> handleUnexpected(Exception exception,
                                                                     HttpServletRequest request) {
+        if (exception instanceof ErrorResponse framework) {
+            // Spring MVC's own 4xx (unsupported method or media type, unknown path, ...) keep their status.
+            HttpStatus status = HttpStatus.resolve(framework.getStatusCode().value());
+            return ResponseEntity.status(framework.getStatusCode())
+                    .headers(framework.getHeaders())
+                    .body(PayRequestErrorResponse.of(status != null ? status.name() : "HTTP_ERROR",
+                            framework.getBody().getDetail(), interactionId(request)));
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(PayRequestErrorResponse.of("INTERNAL_ERROR", "Unexpected error occurred", interactionId(request)));
     }

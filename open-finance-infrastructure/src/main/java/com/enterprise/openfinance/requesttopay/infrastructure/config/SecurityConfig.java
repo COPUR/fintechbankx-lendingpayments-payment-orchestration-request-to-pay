@@ -6,6 +6,7 @@ import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPProof
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPRequestVerifier;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationService;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DpopAwareBearerTokenResolver;
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -61,6 +62,9 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(authorize -> authorize
+                // Container error dispatches (sendError -> /error) carry the status of a request that
+                // already passed this chain; denying them would turn a 404/405 into 401/403.
+                .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                 .requestMatchers("/open-finance/v1/par", "/open-finance/v1/payment-consents/**").authenticated()
                 .anyRequest().denyAll()

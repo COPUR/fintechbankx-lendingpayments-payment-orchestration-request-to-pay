@@ -14,6 +14,7 @@ app.kubernetes.io/part-of: fintechbankx-payments
 app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 fintechbankx.io/service-id: svc-pay-request-to-pay
+fintechbankx.io/app: app-pay-request-to-pay
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 {{- end -}}
 

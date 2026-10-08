@@ -26,6 +26,7 @@ spec:
         version: {{ .Values.image.tag | quote }}
         app.kubernetes.io/part-of: fintechbankx-payments
         fintechbankx.io/service-id: svc-pay-request-to-pay
+        fintechbankx.io/app: app-pay-request-to-pay
         sidecar.istio.io/inject: "true"
       annotations:
         sidecar.istio.io/inject: "true"

@@ -3,7 +3,8 @@
 # Kubernetes Secret synced from AWS Secrets Manager); nothing secret is here.
 spring:
   application:
-    name: payment-request-to-pay-service
+    # Naming standard: app.<context-code>.<capability>.
+    name: app.pay.request-to-pay
   threads:
     virtual:
       enabled: true

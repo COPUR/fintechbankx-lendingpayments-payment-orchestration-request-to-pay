@@ -44,7 +44,8 @@ no `db/backfill` or data-split CI job. Pay requests that are open in the monolit
 they live only in that process's memory and expire with it, as they do today on every restart.
 
 Flyway migrations: `open-finance-infrastructure/src/main/resources/db/migration/V1__create_pay_request_tables.sql`,
-`V2__create_outbox.sql`, `V3__outbox_failure_policy.sql`, `V4__outbox_park_counted.sql`. V1 replaces the seed
+`V2__create_outbox.sql`, `V3__outbox_failure_policy.sql`, `V4__outbox_park_counted.sql` and
+`V5__grant_runtime_role_least_privilege.sql` (runtime role DML only; run as the schema owner by the migration Job). V1 replaces the seed
 migration `V1__Create_pay_requests_table.sql` (schema `pis`), which no environment ever applied because the seed had
 no runnable application. The service never reads monolith tables and no other service reads `sc_pay_request_to_pay`.
 
@@ -62,7 +63,39 @@ no runnable application. The service never reads monolith tables and no other se
 | Enterprise-architecture: LP-10 note updated (service runnable, events through the outbox, legacy `rtp.pay_requests.v1` publisher removed) | enterprise architecture |
 | Regression parity: LP-10 run with 0 regressions, every difference one of LP-10-D01 to D13, run id `<run>-<sha7>` recorded (`docs/migration/REGRESSION_MAPPING.md`) | regression workstream, payments squad |
 | Observability gate (section 4) passed | payments squad, platform observability |
-| DBA bootstrap: create role `payment_request_to_pay_app` (owner of schema `sc_pay_request_to_pay`), write `{"username","password"}` to `<env>/payment-request-to-pay-service/db-app` | payments squad DBA |
+| DBA bootstrap, two roles (platform contract "Database roles"): the schema owner `payment_request_to_pay_owner` (owns `sc_pay_request_to_pay`, runs Flyway; `{"username","password"}` in `<env>/payment-request-to-pay-service/db-migration`, Terraform output `migration_db_secret_name`) and the runtime role `payment_request_to_pay_app` (LOGIN, no ownership; `{"username","password"}` in `<env>/payment-request-to-pay-service/db-app`). Migration V5 grants the runtime role only the DML the service issues; the Helm pre-install/pre-upgrade Job runs V1 to V5 as the owner and the pods run with `SPRING_FLYWAY_ENABLED=false` | payments squad DBA |
+| ConfigMap `rds-ca-bundle` (key `global-bundle.pem`) published in namespace `payments` by the mesh repo's trust-manager Bundle. The chart mounts it at `/etc/fintechbankx/rds-ca` (not optional: without it no pod and no migration Job starts) and `DB_URL` must be the Terraform output `jdbc_url` (`sslmode=verify-full`) | fintechbankx-platform-mesh-security-service-mesh |
+| Selector labels in place before the first install: the Deployment selects `app.kubernetes.io/component=service` (cicd-templates 335a345). `spec.selector` is immutable, so changing it after an install means deleting and recreating the Deployment (an outage), not a `helm upgrade`. No release exists yet | payments squad |
+
+### Requests to the mesh team
+
+Nothing below exists in the mesh repo yet: its AuthorizationPolicies (`k8s/istio/security/rbac-policies.yaml`,
+branch `claude/platform-deployable-tkl0z7` at 294256a) cover namespace `banking` only, with the gateway principal
+`cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account`. The rows above name
+`cluster.local/ns/istio-ingress/sa/istio-ingressgateway`; the mesh team confirms which principal the platform gateway
+runs as.
+
+**A. Inbound to `payment-request-to-pay-service` (namespace `payments`).** ALLOW port 8080 only from the ingress
+gateway principal; nothing else in the mesh may call 8080. This is also the guard for forwarded headers: the DPoP
+`htu` check builds the request URL from `X-Forwarded-Proto/Host/Port` (`server.forward-headers-strategy: framework`),
+so a caller that reaches 8080 without the gateway could forge them. Until this ALLOW rule exists and is cited here
+(file and commit), the service stays off the gateway (cut-over step 1 does not start). 8081 is never public.
+
+**B. Egress under `REGISTRY_ONLY`.** Aurora writer and reader on 5432 (TLS, the service verifies with
+`sslmode=verify-full`), MSK IAM brokers on 9098, regional STS on 443 for IRSA. The Flyway migration Job
+(pre-install/pre-upgrade hook) needs the same 5432 egress. It runs without a sidecar by default
+(`migration.istioSidecar: false`), so only the mesh repo's NetworkPolicies apply to it; they grant Aurora egress by
+`app.kubernetes.io/name` only, and the Job pod carries `app.kubernetes.io/name=payment-request-to-pay-service` like the
+service pods, with `app.kubernetes.io/component=db-migration` (service pods: `service`) keeping it out of the
+Service, PDB and Deployment selectors. Keep the 5432 rule keyed on the name label, not the component. The Job gets no
+policy exemption.
+
+**C. Observability.** The PodMonitor `fintechbankx-services` scrapes Istio's merged metrics on 15020 from namespace
+`observability`; the pod label `fintechbankx.io/service-id: svc-pay-request-to-pay` selects the pods (the Job pod does
+not carry it).
+
+**D. NetworkPolicy.** The chart renders none by default (`networkPolicy.enabled: false`); the mesh repo owns the
+namespace policy. If the chart's opt-in policy is ever used, it admits namespaces only, never a CIDR.
 
 Cross-repository order (each step waits for the previous one to merge):
 

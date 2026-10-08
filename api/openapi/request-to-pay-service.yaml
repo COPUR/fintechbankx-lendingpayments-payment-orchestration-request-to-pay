@@ -282,9 +282,11 @@ components:
       properties:
         paymentId:
           type: string
+          minLength: 1
           description: Required to accept.
         reason:
           type: string
+          maxLength: 256
           description: >-
             Optional free text, at most 256 characters (longer is
             INVALID_REQUEST). Carried in the decision event.

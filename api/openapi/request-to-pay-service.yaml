@@ -222,7 +222,9 @@ components:
       required: true
       description: >-
         Id of the pay request (returned as Data.ConsentId on create). Local to
-        this service; not a consent-authorization consent id.
+        this service; not a consent-authorization consent id. Ids minted by
+        this service start with CONS-RTP2- (the monolith's start with
+        CONS-RTP-); treat the id as opaque.
       schema:
         type: string
   responses:

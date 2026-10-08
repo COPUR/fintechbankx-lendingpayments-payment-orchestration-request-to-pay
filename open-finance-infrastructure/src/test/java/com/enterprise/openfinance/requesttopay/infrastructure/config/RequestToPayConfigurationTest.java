@@ -36,12 +36,19 @@ class RequestToPayConfigurationTest {
         assertThat(configuration.payRequestCache()).isNotNull();
     }
 
+    /**
+     * The monolith mints CONS-RTP-<uuid>. This service mints CONS-RTP2-<uuid>, so the gateway can send
+     * every follow-up call to the backend that created the request, in every cut-over phase including
+     * rollback (runbook): an exact-path rule on the CONS-RTP2- prefix, which CONS-RTP- does not match.
+     */
     @Test
-    void shouldGenerateConsentIdsWithExpectedPrefix() {
+    void idsAreDistinctFromTheMonolithsSoTheGatewayCanRouteByPrefix() {
         Supplier<String> generator = configuration.payRequestConsentIdGenerator();
 
         String consentId = generator.get();
 
-        assertThat(consentId).startsWith("CONS-RTP-");
+        assertThat(consentId).matches("^CONS-RTP2-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
+        assertThat(consentId).doesNotStartWith("CONS-RTP-");
+        assertThat(consentId.length()).isLessThanOrEqualTo(64);
     }
 }

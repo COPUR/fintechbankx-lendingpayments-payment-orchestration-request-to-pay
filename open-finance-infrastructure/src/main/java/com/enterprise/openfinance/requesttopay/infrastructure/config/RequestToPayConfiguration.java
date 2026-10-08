@@ -27,7 +27,8 @@ public class RequestToPayConfiguration {
 
     @Bean
     public Supplier<String> payRequestConsentIdGenerator() {
-        return () -> "CONS-RTP-" + UUID.randomUUID();
+        // CONS-RTP2-: distinct from the monolith's CONS-RTP- ids, so the gateway routes follow-ups by prefix (runbook).
+        return () -> "CONS-RTP2-" + UUID.randomUUID();
     }
 
     /**

@@ -9,7 +9,7 @@ spring:
     virtual:
       enabled: true
   lifecycle:
-    timeout-per-shutdown-phase: 25s
+    timeout-per-shutdown-phase: 40s
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/db_pay_request_to_pay_local}
     username: ${DB_USERNAME:payment_request_to_pay_app}

@@ -40,7 +40,8 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      terminationGracePeriodSeconds: 45
+      # preStop sleep 10 s + spring.lifecycle.timeout-per-shutdown-phase 40 s + 10 s margin
+      terminationGracePeriodSeconds: 60
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

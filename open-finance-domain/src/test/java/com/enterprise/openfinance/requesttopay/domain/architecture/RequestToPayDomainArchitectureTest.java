@@ -27,11 +27,26 @@ class RequestToPayDomainArchitectureTest {
     }
 
     @Test
+    void inPortsAreUseCasesAndOutPortsArePortsOrRepositories() {
+        com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes()
+                .that().resideInAPackage("com.enterprise.openfinance.requesttopay.domain.port.in")
+                .should().beInterfaces().andShould().haveSimpleNameEndingWith("UseCase")
+                .check(DOMAIN);
+        com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes()
+                .that().resideInAPackage("com.enterprise.openfinance.requesttopay.domain.port.out")
+                .should().beInterfaces()
+                .andShould(com.tngtech.archunit.lang.conditions.ArchConditions.haveSimpleNameEndingWith("Port")
+                        .or(com.tngtech.archunit.lang.conditions.ArchConditions.haveSimpleNameEndingWith("Repository"))
+                        .or(com.tngtech.archunit.lang.conditions.ArchConditions.haveSimpleNameEndingWith("Publisher")))
+                .check(DOMAIN);
+    }
+
+    @Test
     void domainIsFreeOfFrameworkPersistenceAndMessagingTypes() {
         noClasses().that().resideInAPackage("com.enterprise.openfinance.requesttopay.domain..")
                 .should().dependOnClassesThat().resideInAnyPackage(
                         "org.springframework..", "jakarta.persistence..", "org.hibernate..",
-                        "com.fasterxml.jackson..", "org.apache.kafka..", "com.mongodb..", "lombok..")
+                        "com.fasterxml.jackson..", "org.apache.kafka..", "com.mongodb..", "org.bson..", "lombok..")
                 .check(DOMAIN);
     }
 }

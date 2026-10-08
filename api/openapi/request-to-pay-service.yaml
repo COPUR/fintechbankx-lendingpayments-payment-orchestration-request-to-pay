@@ -10,6 +10,11 @@ info:
     accompanies each request, the token's cnf.jkt matches the proof key and its
     aud contains svc-pay-request-to-pay. A Bearer token is answered with 401
     and a WWW-Authenticate DPoP challenge.
+
+    Naming: the paths and Data.ConsentId keep the monolith's names for
+    compatibility. The id is a pay-request id minted by this service and local
+    to it (and to the evt.pay.rtp events); it is not a consent of
+    svc-of-consent-authorization and cannot be looked up there.
 servers:
   - url: https://api.example.com/open-finance/v1
 paths:
@@ -92,6 +97,13 @@ paths:
   /payment-consents/{consentId}/accept:
     post:
       summary: Accept request to pay
+      description: >-
+        The TPP that created the request reports acceptance with the paymentId
+        of the resulting payment. The service records it (status Consumed) and
+        publishes Payments.PayRequest.Accepted.v1; it does not verify the
+        debtor's authorisation or the payment. Repeating the call with the same
+        paymentId returns 201 with the current state and publishes nothing; a
+        different paymentId, or a rejected request, is REQUEST_FINALIZED.
       operationId: acceptRequestToPay
       security:
         - dpopAuth: []
@@ -108,7 +120,7 @@ paths:
               $ref: '#/components/schemas/Decision'
       responses:
         '201':
-          description: Request accepted (status Consumed)
+          description: Request accepted (status Consumed), or the same acceptance repeated
           content:
             application/json:
               schema:
@@ -126,6 +138,10 @@ paths:
   /payment-consents/{consentId}/reject:
     post:
       summary: Reject request to pay
+      description: >-
+        The TPP that created the request reports that the debtor declined.
+        Repeating the call on a rejected request returns 200 with the current
+        state and publishes nothing; a consumed request is REQUEST_FINALIZED.
       operationId: rejectRequestToPay
       security:
         - dpopAuth: []
@@ -142,7 +158,7 @@ paths:
               $ref: '#/components/schemas/Decision'
       responses:
         '200':
-          description: Request rejected
+          description: Request rejected, or the rejection repeated
           content:
             application/json:
               schema:
@@ -204,7 +220,9 @@ components:
       name: consentId
       in: path
       required: true
-      description: Id of the pay request (returned as Data.ConsentId on create).
+      description: >-
+        Id of the pay request (returned as Data.ConsentId on create). Local to
+        this service; not a consent-authorization consent id.
       schema:
         type: string
   responses:
@@ -261,6 +279,9 @@ components:
           description: Required to accept.
         reason:
           type: string
+          description: >-
+            Optional free text, at most 256 characters (longer is
+            INVALID_REQUEST). Carried in the decision event.
     RequestToPayCreated:
       type: object
       properties:

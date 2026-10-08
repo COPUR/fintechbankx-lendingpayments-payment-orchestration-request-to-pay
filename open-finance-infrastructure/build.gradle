@@ -37,7 +37,9 @@ dependencies {
     // Transactional outbox relay to Kafka (evt.pay.rtp.*.v1)
     implementation 'org.springframework.kafka:spring-kafka'
     // Amazon MSK IAM authentication (SASL AWS_MSK_IAM), used by the kafka-msk profile.
-    runtimeOnly 'software.amazon.msk:aws-msk-iam-auth:2.2.0'
+    runtimeOnly('software.amazon.msk:aws-msk-iam-auth:2.2.0') {
+        exclude group: 'commons-logging', module: 'commons-logging'
+    }
 
     // OAuth2 resource server, optional DPoP and FAPI headers
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'

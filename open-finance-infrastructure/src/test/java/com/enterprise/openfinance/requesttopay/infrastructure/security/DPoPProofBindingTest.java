@@ -90,6 +90,20 @@ class DPoPProofBindingTest {
     }
 
     @Test
+    void iatExactlySixtySecondsAheadIsAccepted() throws Exception {
+        String proof = proof("GET", URL.toString(), NOW.plusSeconds(60), ath(ACCESS_TOKEN));
+
+        assertThat(service.validateDPoPProof(proof, HttpMethod.GET, URL, ACCESS_TOKEN)).isNotNull();
+    }
+
+    @Test
+    void iatExactlyThreeHundredSecondsOldIsAccepted() throws Exception {
+        String proof = proof("GET", URL.toString(), NOW.minusSeconds(300), ath(ACCESS_TOKEN));
+
+        assertThat(service.validateDPoPProof(proof, HttpMethod.GET, URL, ACCESS_TOKEN)).isNotNull();
+    }
+
+    @Test
     void jtiOfAProofNearTheFutureLimitIsKeptUntilThatProofExpires() throws Exception {
         String jti = UUID.randomUUID().toString();
         String proof = proof(jti, "GET", URL.toString(), NOW.plusSeconds(55), ath(ACCESS_TOKEN));

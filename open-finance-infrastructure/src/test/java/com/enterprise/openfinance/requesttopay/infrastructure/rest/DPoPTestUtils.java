@@ -48,9 +48,15 @@ public class DPoPTestUtils {
         return createJwtWithCnf(key, "TPP-001");
     }
 
-    /** A DPoP-bound token for {@code azp}; {@code azp == null} gives a token without client identity. */
+    /** The claim the realm's default client scope puts on every open-finance TPP client's token. */
+    public static final Map<String, Object> TPP_CLIENT_TYPE = Map.of("fbx_client_type", "open-finance-tpp");
+
+    /**
+     * A DPoP-bound TPP token for {@code azp} (scope payments, fbx_client_type=open-finance-tpp);
+     * {@code azp == null} gives a token without client identity.
+     */
     public static Jwt createJwtWithCnf(ECKey key, String azp) throws Exception {
-        return createJwtWithCnf(key, azp, "payments", Map.of());
+        return createJwtWithCnf(key, azp, "payments", TPP_CLIENT_TYPE);
     }
 
     /** A DPoP-bound token for {@code azp} with the given scope and extra claims. */

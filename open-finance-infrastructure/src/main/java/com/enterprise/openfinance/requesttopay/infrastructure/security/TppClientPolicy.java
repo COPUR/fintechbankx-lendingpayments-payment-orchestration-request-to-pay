@@ -17,13 +17,11 @@ import java.util.List;
  *   (fintechbankx-web, fintechbankx-mobile). Keycloak adds this service's
  *   audience to service and channel clients too, so aud alone does not say
  *   "TPP";</li>
- *   <li>the client is positively known to be a TPP (allow-list, fail closed):
- *   when the token carries the client-type claim, it must name a TPP
- *   ({@code open-finance-tpp}); when it does not, the client must be in
- *   {@code allowedClients}, the same TPP cohort the gateway routes here
- *   ({@code rtp-cutover-cohort}). An empty list admits no client without the
- *   claim. The realm tags TPP clients fbx.client-type=open-finance-tpp but does
- *   not put it in tokens yet; once a mapper does, the claim decides.</li>
+ *   <li>the token carries the client-type claim and it names a TPP
+ *   ({@code open-finance-tpp}); a token without the claim is refused (fail
+ *   closed). The realm's default client scope fbx-client-type-open-finance-tpp
+ *   puts fbx_client_type=open-finance-tpp on every open-finance TPP client's
+ *   token.</li>
  * </ul>
  */
 public final class TppClientPolicy {
@@ -33,20 +31,23 @@ public final class TppClientPolicy {
     private final List<String> deniedClientIds;
     private final String clientTypeClaim;
     private final String tppClientType;
-    private final List<String> allowedClients;
 
     public TppClientPolicy(String requiredScope, Collection<String> deniedClientPrefixes,
-                           Collection<String> deniedClientIds, String clientTypeClaim, String tppClientType,
-                           Collection<String> allowedClients) {
+                           Collection<String> deniedClientIds, String clientTypeClaim, String tppClientType) {
         if (requiredScope == null || requiredScope.isBlank()) {
             throw new IllegalArgumentException("requesttopay.security.tpp.required-scope must be set");
         }
         this.requiredScope = requiredScope.trim();
         this.deniedClientPrefixes = clean(deniedClientPrefixes);
         this.deniedClientIds = clean(deniedClientIds);
-        this.clientTypeClaim = clientTypeClaim;
-        this.tppClientType = tppClientType;
-        this.allowedClients = clean(allowedClients);
+        if (clientTypeClaim == null || clientTypeClaim.isBlank()) {
+            throw new IllegalArgumentException("requesttopay.security.tpp.client-type-claim must be set");
+        }
+        if (tppClientType == null || tppClientType.isBlank()) {
+            throw new IllegalArgumentException("requesttopay.security.tpp.client-type must be set");
+        }
+        this.clientTypeClaim = clientTypeClaim.trim();
+        this.tppClientType = tppClientType.trim();
     }
 
     public boolean allows(Authentication authentication) {
@@ -66,10 +67,7 @@ public final class TppClientPolicy {
         if (deniedClientIds.contains(client) || deniedClientPrefixes.stream().anyMatch(client::startsWith)) {
             return false;
         }
-        if (clientTypeClaim != null && !clientTypeClaim.isBlank() && token.hasClaim(clientTypeClaim)) {
-            return tppClientType != null && tppClientType.equals(token.getClaimAsString(clientTypeClaim));
-        }
-        return allowedClients.contains(client);
+        return tppClientType.equals(token.getClaimAsString(clientTypeClaim));
     }
 
     /** The OAuth2 client that obtained the token: azp, else client_id. */

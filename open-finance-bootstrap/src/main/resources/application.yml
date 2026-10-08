@@ -119,20 +119,17 @@ openfinance:
 requesttopay:
   security:
     tpp:
-      # TPP paths need this scope as well as aud. The realm has no such client scope yet
-      # (identity hand-off): until it exists every TPP call is 403.
+      # TPP paths need this scope as well as aud: an optional client scope of TPP clients in the
+      # realm (identity realm-as-code, Proposed), so TPP flows must request it.
       required-scope: ${TPP_REQUIRED_SCOPE:payments}
       # Keycloak adds this service's audience to service and channel clients too; they are
       # not TPPs. Service clients are named svc-<ctx>-<capability>.
       denied-client-prefixes: svc-
       denied-client-ids: fintechbankx-web,fintechbankx-mobile
-      # Allow-list, fail closed. A token with this claim must name open-finance-tpp (realm client
-      # attribute fbx.client-type, once a mapper adds it to tokens).
+      # Fail closed: the token must carry this claim with this value. The realm's default client
+      # scope fbx-client-type-open-finance-tpp emits it on every open-finance TPP client.
       client-type-claim: fbx_client_type
       client-type: open-finance-tpp
-      # A token without the claim must come from one of these clients (azp, else client_id): the
-      # same TPP cohort the gateway routes here (rtp-cutover-cohort). Empty: no client is admitted.
-      allowed-clients: ${TPP_ALLOWED_CLIENTS:}
   outbox:
     retention: P7D
     relay:

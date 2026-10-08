@@ -229,16 +229,24 @@ class PayRequestControllerDPoPIntegrationTest {
 
     @Test
     void aTokenFromAnUnknownClientWithoutTheClientTypeClaimIsForbidden() throws Exception {
-        // TPP-UNKNOWN is neither denied nor in requesttopay.security.tpp.allowed-clients.
-        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-UNKNOWN"));
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-UNKNOWN", "payments", java.util.Map.of()));
 
         mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
                 .andExpect(status().isForbidden());
     }
 
     @Test
-    void aListedClientWithoutTheClientTypeClaimIsServed() throws Exception {
-        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
+    void aTokenWithoutTheClientTypeClaimIsForbiddenEvenForAKnownTppClient() throws Exception {
+        // TPP-001 was on the former allowed-clients list; the claim is now required (fail closed).
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001", "payments", java.util.Map.of()));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void anyTppClientWithTheClaimAndThePaymentsScopeIsServed() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-NEW", "payments", DPoPTestUtils.TPP_CLIENT_TYPE));
 
         mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
                 .andExpect(status().isOk());

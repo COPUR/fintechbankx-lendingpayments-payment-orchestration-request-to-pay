@@ -68,6 +68,12 @@ public class OutboxEventJpaEntity {
     @Column(name = "last_error", length = 512)
     private String lastError;
 
+    @Column(name = "parked_at")
+    private Instant parkedAt;
+
+    @Column(name = "park_reason", length = 256)
+    private String parkReason;
+
     protected OutboxEventJpaEntity() {
     }
 
@@ -103,6 +109,8 @@ public class OutboxEventJpaEntity {
     public Instant getPublishedAt() { return publishedAt; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }
+    public String getParkReason() { return parkReason; }
+    public Instant getParkedAt() { return parkedAt; }
 
     void markPublished(Instant at) {
         this.status = Status.PUBLISHED;
@@ -112,18 +120,18 @@ public class OutboxEventJpaEntity {
     }
 
     /**
-     * Records a failed send; after {@code maxAttempts} the row is PARKED
-     * (dead-letter state) and no longer blocks later rows.
-     *
-     * @return true when the row was parked by this failure
+     * Dead-letter state for a payload error: waits for an operator and keeps the
+     * aggregate's later rows pending. Operators park other rows by hand (runbook).
      */
-    boolean markFailed(String error, int maxAttempts) {
+    void park(String error, String reason, Instant at) {
         this.attempts++;
-        this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
-        if (attempts >= maxAttempts) {
-            this.status = Status.PARKED;
-            return true;
-        }
-        return false;
+        this.lastError = truncate(error);
+        this.status = Status.PARKED;
+        this.parkedAt = at;
+        this.parkReason = reason;
+    }
+
+    private static String truncate(String error) {
+        return error == null ? null : error.substring(0, Math.min(error.length(), 512));
     }
 }

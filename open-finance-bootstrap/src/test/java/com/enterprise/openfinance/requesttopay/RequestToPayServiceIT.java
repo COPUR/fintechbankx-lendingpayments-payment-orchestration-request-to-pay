@@ -6,6 +6,8 @@ import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.port.in.PayRequestUseCase;
 import com.enterprise.openfinance.requesttopay.infrastructure.outbox.OutboxEventJpaEntity;
 import com.enterprise.openfinance.requesttopay.infrastructure.outbox.OutboxRelay;
+import com.enterprise.openfinance.requesttopay.infrastructure.outbox.PostgresSessionRelayLock;
+import com.enterprise.openfinance.requesttopay.infrastructure.outbox.RelayLock;
 import com.enterprise.openfinance.requesttopay.infrastructure.outbox.SpringDataOutboxRepository;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.JdbcDPoPNonceRepository;
 import com.nimbusds.jose.JOSEObjectType;
@@ -41,7 +43,10 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+
+import javax.sql.DataSource;
 
 import java.math.BigDecimal;
 import java.time.Clock;
@@ -51,6 +56,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -101,6 +107,7 @@ class RequestToPayServiceIT {
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired JdbcDPoPNonceRepository dpopJti;
+    @Autowired DataSource dataSource;
     @MockBean JwtDecoder jwtDecoder;
 
     private static final ECKey TPP_KEY = newKey();
@@ -270,8 +277,7 @@ class RequestToPayServiceIT {
         String consentId = create("idem-relay", "60.00", "ix-relay");
         KafkaTemplate<String, String> kafka = Mockito.mock(KafkaTemplate.class);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(null));
-        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                Clock.systemUTC(), 100, 10, Duration.ofSeconds(5), Duration.ofDays(7));
+        OutboxRelay relay = relay(kafka, Duration.ofSeconds(5));
 
         assertThat(relay.relayOnce()).isEqualTo(1);
         assertThat(relay.relayOnce()).isZero();
@@ -282,6 +288,75 @@ class RequestToPayServiceIT {
         assertThat(sent.getValue().key()).isEqualTo(consentId);
         assertThat(outbox.countByStatus(OutboxEventJpaEntity.Status.PUBLISHED)).isEqualTo(1);
         assertThat(outbox.countByStatus(OutboxEventJpaEntity.Status.PENDING)).isZero();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aParkedEventHoldsBackItsAggregatesLaterEventsWhileOtherAggregatesFlow() throws Exception {
+        String parkedAggregate = create("idem-park-a", "10.00", "ix-park-a");
+        mvc.perform(asTpp(post("/open-finance/v1/payment-consents/{id}/accept", parkedAggregate))
+                        .header("X-FAPI-Interaction-ID", "ix-park-accept")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\": \"PAY-P1\"}"))
+                .andExpect(status().isCreated());
+        String otherAggregate = create("idem-park-b", "20.00", "ix-park-b");
+        jdbc.update("update " + SCHEMA + ".outbox_event set status = 'PARKED', parked_at = now(), attempts = 1, "
+                + "last_error = 'RecordTooLargeException', park_reason = 'payload error (relay)' where aggregate_id = ? and aggregate_version = 0", parkedAggregate);
+        KafkaTemplate<String, String> kafka = Mockito.mock(KafkaTemplate.class);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(null));
+
+        assertThat(relay(kafka, Duration.ofSeconds(5)).relayOnce()).isEqualTo(1);
+
+        org.mockito.ArgumentCaptor<ProducerRecord<String, String>> sent = org.mockito.ArgumentCaptor.forClass(ProducerRecord.class);
+        Mockito.verify(kafka).send(sent.capture());
+        assertThat(sent.getValue().key()).isEqualTo(otherAggregate);
+        assertThat(jdbc.queryForObject("select status from " + SCHEMA + ".outbox_event where aggregate_id = ? "
+                + "and aggregate_version = 1", String.class, parkedAggregate)).isEqualTo("PENDING");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aSendThatNeverCompletesHoldsNoTransactionAndMarksNothing() throws Exception {
+        String consentId = create("idem-stuck", "30.00", "ix-stuck");
+        KafkaTemplate<String, String> kafka = Mockito.mock(KafkaTemplate.class);
+        List<Boolean> transactionOpenDuringSend = new ArrayList<>();
+        List<Long> openTransactionsOfThisDatabase = new ArrayList<>();
+        when(kafka.send(any(ProducerRecord.class))).thenAnswer(call -> {
+            transactionOpenDuringSend.add(TransactionSynchronizationManager.isActualTransactionActive());
+            openTransactionsOfThisDatabase.add(jdbc.queryForObject("""
+                    select count(*) from pg_stat_activity
+                    where datname = current_database() and state = 'idle in transaction'""", Long.class));
+            return new CompletableFuture<>();
+        });
+
+        assertThat(relay(kafka, Duration.ofMillis(200)).relayOnce()).isZero();
+
+        assertThat(transactionOpenDuringSend).containsExactly(false);
+        assertThat(openTransactionsOfThisDatabase).containsExactly(0L);
+        Map<String, Object> row = jdbc.queryForMap("select status, attempts, last_error from "
+                + SCHEMA + ".outbox_event where aggregate_id = ?", consentId);
+        assertThat(row.get("status")).isEqualTo("PENDING");
+        assertThat(((Number) row.get("attempts")).intValue()).isZero();
+        assertThat(row.get("last_error")).isNull();
+    }
+
+    @Test
+    void onlyOneRelayHoldsTheSessionLockAndItIsReleasedAfterTheRun() {
+        PostgresSessionRelayLock first = new PostgresSessionRelayLock(dataSource, OutboxRelay.RELAY_LOCK_KEY);
+        PostgresSessionRelayLock second = new PostgresSessionRelayLock(dataSource, OutboxRelay.RELAY_LOCK_KEY);
+
+        try (RelayLock.Held held = first.tryAcquire().orElseThrow()) {
+            assertThat(second.tryAcquire()).isEmpty();
+        }
+        Optional<RelayLock.Held> again = second.tryAcquire();
+        assertThat(again).isPresent();
+        again.get().close();
+    }
+
+    private OutboxRelay relay(KafkaTemplate<String, String> kafka, Duration sendTimeout) {
+        return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+                new PostgresSessionRelayLock(dataSource, OutboxRelay.RELAY_LOCK_KEY), Clock.systemUTC(),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                new OutboxRelay.Settings(100, sendTimeout, Duration.ofSeconds(10), Duration.ofDays(7)));
     }
 
     @Test

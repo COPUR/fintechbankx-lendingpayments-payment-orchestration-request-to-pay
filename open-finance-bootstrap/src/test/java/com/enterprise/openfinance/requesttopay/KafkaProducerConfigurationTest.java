@@ -42,10 +42,25 @@ class KafkaProducerConfigurationTest {
         long requestTimeout = Long.parseLong(producer.get(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG).toString());
         Duration relaySendTimeout = binder().bind("requesttopay.outbox.relay.send-timeout", Duration.class).get();
 
-        assertThat(requestTimeout).isEqualTo(20_000L);
         assertThat(deliveryTimeout).isGreaterThanOrEqualTo(linger + requestTimeout);
-        assertThat(relaySendTimeout).isEqualTo(Duration.ofSeconds(35));
         assertThat(relaySendTimeout.toMillis()).isGreaterThan(deliveryTimeout);
+    }
+
+    /**
+     * A relay run starts no send after run-budget; the last send blocks at most max.block.ms
+     * in KafkaTemplate.send and then send-timeout on the future. The sum must end inside the
+     * graceful shutdown phase, or a rollout kills the run mid-send.
+     */
+    @Test
+    void aRelayRunEndsInsideTheShutdownPhase() throws IOException {
+        Map<String, Object> producer = kafkaProperties().buildProducerProperties(null);
+        long maxBlock = Long.parseLong(String.valueOf(producer.get(ProducerConfig.MAX_BLOCK_MS_CONFIG)));
+        Duration sendTimeout = binder().bind("requesttopay.outbox.relay.send-timeout", Duration.class).get();
+        Duration runBudget = binder().bind("requesttopay.outbox.relay.run-budget", Duration.class).get();
+        Duration shutdownPhase = binder().bind("spring.lifecycle.timeout-per-shutdown-phase", Duration.class).get();
+
+        assertThat(maxBlock).isLessThan(sendTimeout.toMillis());
+        assertThat(runBudget.plusMillis(maxBlock).plus(sendTimeout)).isLessThan(shutdownPhase);
     }
 
     private static KafkaProperties kafkaProperties() throws IOException {

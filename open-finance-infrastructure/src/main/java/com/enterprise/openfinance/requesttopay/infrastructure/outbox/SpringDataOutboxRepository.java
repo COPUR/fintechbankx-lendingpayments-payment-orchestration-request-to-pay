@@ -13,16 +13,20 @@ import java.util.UUID;
 public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpaEntity, UUID> {
 
     /**
-     * Takes the cluster-wide relay lock for the current transaction. Only one
-     * replica relays at a time, which keeps each aggregate's events in order.
+     * Pending rows in insertion order, except rows of an aggregate that has
+     * an earlier PARKED row: a parked event keeps its aggregate's later events
+     * pending until an operator replays it, so consumers never see them out
+     * of order. Other aggregates keep flowing.
      */
-    @Query(value = "select pg_try_advisory_xact_lock(:key)", nativeQuery = true)
-    boolean tryRelayLock(@Param("key") long key);
-
     @Query(value = """
-            select * from outbox_event
-            where status = 'PENDING'
-            order by created_seq
+            select o.* from outbox_event o
+            where o.status = 'PENDING'
+              and not exists (
+                  select 1 from outbox_event p
+                  where p.status = 'PARKED'
+                    and p.aggregate_id = o.aggregate_id
+                    and p.created_seq < o.created_seq)
+            order by o.created_seq
             limit :batchSize
             """, nativeQuery = true)
     List<OutboxEventJpaEntity> findPendingBatch(@Param("batchSize") int batchSize);

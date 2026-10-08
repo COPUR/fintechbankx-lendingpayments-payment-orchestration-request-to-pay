@@ -52,11 +52,14 @@ spring:
       properties:
         enable.idempotence: true
         max.in.flight.requests.per.connection: 5
-        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms (checked by
-        # KafkaProducerConfigurationTest); the relay send-timeout must stay above delivery.timeout.ms.
-        delivery.timeout.ms: 30000
-        request.timeout.ms: 20000
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms; the relay
+        # send-timeout stays above delivery.timeout.ms, and run-budget + max.block.ms +
+        # send-timeout stays inside the 40 s shutdown phase (KafkaProducerConfigurationTest).
+        delivery.timeout.ms: 12000
+        request.timeout.ms: 10000
         linger.ms: 5
+        # Bounds the time KafkaTemplate.send blocks for metadata (default 60 s).
+        max.block.ms: 5000
   security:
     oauth2:
       resourceserver:
@@ -117,13 +120,17 @@ requesttopay:
   outbox:
     retention: P7D
     relay:
-      # Off until the evt.pay.rtp.*.v1 topics exist on the platform cluster (runbook step 1).
+      # Off until the evt.pay.rtp.*.v1 topics exist on the platform cluster and the payments
+      # owner has decided who may accept a pay request (runbook preconditions).
       enabled: ${OUTBOX_RELAY_ENABLED:false}
       interval: PT1S
       batch-size: 100
-      max-attempts: ${OUTBOX_RELAY_MAX_ATTEMPTS:10}
-      # Longer than delivery.timeout.ms (30 s) so the relay observes the producer's real outcome.
-      send-timeout: PT35S
+      # Longer than delivery.timeout.ms (12 s) so the relay observes the producer's real outcome.
+      send-timeout: PT13S
+      # No new send starts after this much time in one run (shutdown budget, see above).
+      # Payload errors park the row; every other error stops the batch unmarked and the relay
+      # backs off (ADR-021 decision 4). Nothing else is parked automatically.
+      run-budget: PT10S
   housekeeping:
     interval: PT10M
 

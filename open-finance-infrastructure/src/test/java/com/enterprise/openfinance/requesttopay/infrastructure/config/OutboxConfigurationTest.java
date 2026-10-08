@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
 
+import javax.sql.DataSource;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -40,9 +41,9 @@ class OutboxConfigurationTest {
         configuration.outboxParkedGauge(registry, outbox);
         configuration.outboxOldestPendingAgeGauge(registry, outbox, clock);
 
-        assertThat(registry.get("outbox_pending_events").gauge().value()).isEqualTo(7.0);
-        assertThat(registry.get("outbox_parked_events").gauge().value()).isEqualTo(2.0);
-        assertThat(registry.get("outbox_oldest_pending_age_seconds").gauge().value()).isEqualTo(90.0);
+        assertThat(registry.get("outbox.pending.events").gauge().value()).isEqualTo(7.0);
+        assertThat(registry.get("outbox.parked.events").gauge().value()).isEqualTo(2.0);
+        assertThat(registry.get("outbox.oldest.pending.age.seconds").gauge().value()).isEqualTo(90.0);
     }
 
     @Test
@@ -52,7 +53,7 @@ class OutboxConfigurationTest {
 
         configuration.outboxOldestPendingAgeGauge(registry, outbox, clock);
 
-        assertThat(registry.get("outbox_oldest_pending_age_seconds").gauge().value()).isZero();
+        assertThat(registry.get("outbox.oldest.pending.age.seconds").gauge().value()).isZero();
     }
 
     @Test
@@ -76,8 +77,13 @@ class OutboxConfigurationTest {
     void relayScheduleRelaysAndPurges() {
         OutboxConfiguration.RelayConfiguration relayConfiguration = new OutboxConfiguration.RelayConfiguration();
         OutboxRelay relay = relayConfiguration.outboxRelay(outbox, mock(KafkaTemplate.class),
-                mock(PlatformTransactionManager.class), clock, 50, 10, Duration.ofSeconds(5), Duration.ofDays(7));
+                mock(PlatformTransactionManager.class), mock(DataSource.class), clock, new SimpleMeterRegistry(), 50,
+                Duration.ofSeconds(13), Duration.ofSeconds(10), Duration.ofDays(7));
         OutboxRelay mockedRelay = mock(OutboxRelay.class);
+        when(mockedRelay.consecutiveFailedRuns()).thenReturn(3);
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        relayConfiguration.outboxRelayFailedRunsGauge(registry, mockedRelay);
+        assertThat(registry.get("outbox.relay.consecutive.failed.runs").gauge().value()).isEqualTo(3.0);
 
         OutboxConfiguration.RelaySchedule schedule = relayConfiguration.relaySchedule(mockedRelay);
         schedule.relay();

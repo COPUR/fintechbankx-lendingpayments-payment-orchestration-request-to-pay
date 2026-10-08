@@ -1,0 +1,72 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Install into namespace "payments". Override per environment with values-<env>.yaml.
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/payment-request-to-pay-service
+  tag: ""          # immutable tag (git SHA); never "latest". Also the pod label "version".
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  name: payment-request-to-pay-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA, MSK topic access).
+  roleArn: ""
+
+service:
+  port: 8080
+  managementPort: 8081
+
+# Memory request = limit: the JVM sizes its heap from the limit (MaxRAMPercentage=75).
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2
+
+kafka:
+  # kafka-msk (Amazon MSK, IAM auth via IRSA) or kafka-strimzi (in-cluster, TLS client certificate).
+  profile: kafka-msk
+  # Secret with user.crt, user.key, ca.crt (kafka-strimzi only).
+  strimziTlsSecret: kafka-client-tls
+
+# Non-secret runtime settings, rendered into a ConfigMap. The first four are required.
+config:
+  DB_URL: ""                      # jdbc:postgresql://<aurora-writer>:5432/db_pay_request_to_pay_<env>?sslmode=require
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam (port 9098)
+  OIDC_ISSUER_URI: ""             # https://<identity-host>/realms/fintechbankx
+  OIDC_JWK_SET_URI: ""            # <issuer>/protocol/openid-connect/certs
+  OIDC_AUDIENCE: svc-pay-request-to-pay
+  DB_USERNAME: payment_request_to_pay_app
+  DB_POOL_MAX: "10"
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  # Off until evt.pay.rtp.*.v1 exist on the cluster (runbook step 1); events wait in the outbox.
+  OUTBOX_RELAY_ENABLED: "false"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
+
+# Database credential, synced from AWS Secrets Manager by External Secrets
+# Operator through the platform ClusterSecretStore aws-secrets-manager.
+externalSecret:
+  enabled: true
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name.
+  remoteSecretName: ""
+  refreshInterval: 1h
+
+networkPolicy:
+  enabled: true
+  # TPP traffic arrives through the Istio ingress gateway.
+  apiCallerNamespaces:
+    - istio-ingress
+
+topologySpread:
+  maxSkew: 1

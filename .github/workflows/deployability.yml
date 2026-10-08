@@ -1,0 +1,86 @@
+name: Deployability
+
+# Proves every change still produces a runnable image and valid deployment
+# manifests. Nothing is pushed or applied from here.
+
+on:
+  pull_request:
+    branches: [main, dev, staging]
+  push:
+    branches: [main, dev, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    name: deploy/container-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --tag payment-request-to-pay-service:${{ github.sha }} .
+      - name: Image runs as non-root
+        run: |
+          user="$(docker image inspect --format '{{.Config.User}}' payment-request-to-pay-service:${{ github.sha }})"
+          echo "image user: $user"
+          test "$user" = "10001:10001"
+
+  helm:
+    name: deploy/helm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: Lint and render chart
+        shell: bash
+        run: |
+          set -euo pipefail
+          chart=deploy/helm/payment-request-to-pay-service
+          args=(
+            --namespace payments
+            --set image.repository=ci/payment-request-to-pay-service
+            --set image.tag=${{ github.sha }}
+            --set serviceAccount.roleArn=arn:aws:iam::111122223333:role/ci-payment-request-to-pay-service-irsa
+            --set externalSecret.remoteSecretName=ci/payment-request-to-pay-service/db-app
+            --set config.DB_URL=jdbc:postgresql://db.ci:5432/db_pay_request_to_pay_ci
+            --set config.KAFKA_BOOTSTRAP_SERVERS=kafka.ci:9098
+            --set config.OIDC_ISSUER_URI=https://identity.ci/realms/fintechbankx
+            --set config.OIDC_JWK_SET_URI=https://identity.ci/realms/fintechbankx/protocol/openid-connect/certs
+          )
+          helm lint "$chart" "${args[@]}"
+          helm template ci "$chart" "${args[@]}" > /dev/null
+          helm template ci "$chart" -f "$chart/values-dev.yaml" "${args[@]}" > /dev/null
+          helm template ci "$chart" "${args[@]}" --set kafka.profile=kafka-strimzi > /dev/null
+          # A missing required setting must fail the render.
+          if helm template ci "$chart" "${args[@]}" --set config.DB_URL= > /dev/null 2>&1; then
+            echo "chart rendered without DB_URL"; exit 1
+          fi
+
+  terraform:
+    name: deploy/terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  asyncapi:
+    name: deploy/asyncapi-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate provider event contract
+        run: for spec in api/asyncapi/*.yaml; do npx -y @asyncapi/cli@2.13.0 validate "$spec"; done

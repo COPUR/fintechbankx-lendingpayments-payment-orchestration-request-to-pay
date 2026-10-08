@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "rtp.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtp.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "rtp.selectorLabels" . | nindent 6 }}

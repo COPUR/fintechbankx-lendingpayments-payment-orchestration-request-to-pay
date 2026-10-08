@@ -31,11 +31,31 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          gradle --no-daemon clean assemble -x test
+          ./gradlew --no-daemon clean assemble -x test
 
   test:
     name: ci/test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: db_pay_request_to_pay_test
+          POSTGRES_USER: payment_test
+          POSTGRES_PASSWORD: payment_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U payment_test -d db_pay_request_to_pay_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # open-finance-bootstrap integration tests run Flyway and the full service against this
+      # database. With CI=true (set by GitHub Actions) they fail instead of skipping without it.
+      TEST_DB_URL: jdbc:postgresql://localhost:5432/db_pay_request_to_pay_test
+      TEST_DB_USERNAME: payment_test
+      TEST_DB_PASSWORD: payment_test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,7 +74,7 @@ jobs:
           node-version: '22'
 
       - name: Run tests and coverage gates
-        run: gradle --no-daemon clean check
+        run: ./gradlew --no-daemon clean check
 
       - name: Assert test execution produced reports
         shell: bash

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rtp.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtp.labels" . | nindent 4 }}
+data:
+  # Required settings: rendering fails when one is missing.
+  DB_URL: {{ required "config.DB_URL is required (deploy/terraform output jdbc_url)" .Values.config.DB_URL | quote }}
+  KAFKA_BOOTSTRAP_SERVERS: {{ required "config.KAFKA_BOOTSTRAP_SERVERS is required" .Values.config.KAFKA_BOOTSTRAP_SERVERS | quote }}
+  OIDC_ISSUER_URI: {{ required "config.OIDC_ISSUER_URI is required" .Values.config.OIDC_ISSUER_URI | quote }}
+  OIDC_JWK_SET_URI: {{ required "config.OIDC_JWK_SET_URI is required" .Values.config.OIDC_JWK_SET_URI | quote }}
+  {{- range $key, $value := .Values.config }}
+  {{- if not (has $key (list "DB_URL" "KAFKA_BOOTSTRAP_SERVERS" "OIDC_ISSUER_URI" "OIDC_JWK_SET_URI")) }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  {{- end }}

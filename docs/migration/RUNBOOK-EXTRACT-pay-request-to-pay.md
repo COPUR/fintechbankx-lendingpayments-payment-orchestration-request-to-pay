@@ -65,5 +65,5 @@ back to, so there is nothing to replay.
 - [ ] Topics created on the platform cluster
 - [ ] Keycloak audience mapper and mesh ALLOW rule in place
 - [x] OpenAPI aligned with the controller (monolith paths under `/open-finance/v1`)
-- [ ] Contract owner accepts the OpenAPI breaking changes against `main` (oasdiff: removed never-served `/par/{requestId}` paths, new required `PsuId`/`InstructedAmount`, interaction-id pattern)
+- [ ] Contract owner accepts the OpenAPI breaking changes against `main` (Proposed ADR `docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md`, waiver `api/openapi/request-to-pay-service.accepted-breaking.txt`; delete the waiver in the next PR)
 - [ ] Monolith `requesttopay` package removed

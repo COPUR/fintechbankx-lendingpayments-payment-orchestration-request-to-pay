@@ -39,7 +39,33 @@ for spec in "${specs[@]}"; do
   cp "$spec" "$cp_file"
 
   echo "[oasdiff] checking $spec"
-  if ! oasdiff breaking --fail-on ERR "$base_file" "$cp_file"; then
+  # A reviewed, line-by-line list of accepted breaking changes for this spec
+  # (<spec>.accepted-breaking.txt next to it). Each line is one oasdiff error;
+  # anything not listed still fails. Waivers belong to one change only: the
+  # file must not exist on the base branch (delete it in the PR after the one
+  # that merged it), it must start with a "# Accepted" line saying why, and
+  # CODEOWNERS makes its owners review every edit.
+  ignore_args=()
+  accepted="${spec%.yaml}.accepted-breaking.txt"
+  if [ -f "$accepted" ]; then
+    if git cat-file -e "$BASE_REF:$accepted" 2>/dev/null; then
+      echo "[oasdiff] $accepted is already on $BASE_REF; waivers apply to one change, delete it" >&2
+      fail=1
+      continue
+    fi
+    if ! head -n 1 "$accepted" | grep -q '^# Accepted '; then
+      echo "[oasdiff] $accepted must start with a '# Accepted <date> ...: <reason>' line" >&2
+      fail=1
+      continue
+    fi
+    echo "[oasdiff] applying accepted breaking changes from $accepted:"
+    grep -v '^#' "$accepted" | sed 's/^/[oasdiff]   waived: /'
+    if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+      { echo "### Accepted breaking changes in $spec"; echo; grep -v '^#' "$accepted" | sed 's/^/- /'; } >> "$GITHUB_STEP_SUMMARY"
+    fi
+    ignore_args=(--err-ignore "$accepted")
+  fi
+  if ! oasdiff breaking --fail-on ERR "${ignore_args[@]}" "$base_file" "$cp_file"; then
     echo "[oasdiff] breaking change detected in $spec"
     fail=1
   fi

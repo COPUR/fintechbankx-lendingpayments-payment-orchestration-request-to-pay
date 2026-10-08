@@ -16,7 +16,7 @@ under `/open-finance/v1` and require DPoP; `/api/v1` is for internal callers, an
 | `GET /open-finance/v1/payment-consents/{consentId}` | same path | Same body (`Data.ConsentId`, `Data.Status`, `Data.PaymentId`), `ETag` / `If-None-Match` -> 304 unchanged | 200/304/404 unchanged; other TPP 400 -> **403** |
 | `POST /open-finance/v1/payment-consents/{consentId}/accept` | same path | Same body `{"paymentId"}` and response | 201 unchanged; finalized 400 `REQUEST_FINALIZED` unchanged; other TPP 400 -> **403**; concurrent change 409 `CONCURRENT_UPDATE` |
 | `POST /open-finance/v1/payment-consents/{consentId}/reject` | same path | Same body and response | 200 unchanged; finalized 400; other TPP 400 -> **403** |
-| `api/openapi/request-to-pay-service.yaml` on `main`: `/par/{requestId}[/accept|/reject]`, `DebtorIdentifier`, `RequestId` | spec rewritten to the served paths and fields (version 1.0.0) | the `main` spec was never served by the monolith or this repository | oasdiff reports 6 breaking errors against `main`; contract owner must accept them (ADR) |
+| `api/openapi/request-to-pay-service.yaml` on `main`: `/par/{requestId}[/accept|/reject]`, `DebtorIdentifier`, `RequestId` | spec rewritten to the served paths and fields (version 1.0.0) | the `main` spec was never served by the monolith or this repository | 6 oasdiff breaking errors against `main`, listed in `api/openapi/request-to-pay-service.accepted-breaking.txt`; Proposed ADR `docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md` awaits the owner |
 
 ## Intentional behaviour changes
 

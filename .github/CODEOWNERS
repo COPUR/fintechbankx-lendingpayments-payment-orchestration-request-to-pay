@@ -1,0 +1,2 @@
+# Waivers of the OpenAPI breaking-change gate need the API owner's review.
+api/openapi/*.accepted-breaking.txt @COPUR

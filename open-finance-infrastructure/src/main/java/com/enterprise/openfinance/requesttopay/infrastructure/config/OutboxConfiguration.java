@@ -39,8 +39,10 @@ public class OutboxConfiguration {
 
     /*
      * Meter names are dotted (Micrometer); Prometheus shows them as outbox_pending_events,
-     * outbox_parked_events and outbox_oldest_pending_age_seconds. No meter carries an
-     * identifier (consent, PSU, TPP) as a tag.
+     * outbox_parked_rows and outbox_oldest_pending_age_seconds. The relay adds the counters
+     * outbox_parked_events_total and outbox_send_failures_total, tagged by exception class only.
+     * No meter carries an identifier (consent, PSU, TPP) as a tag. The parked rows gauge is not
+     * called outbox.parked.events: Prometheus would drop the counter of that name.
      */
 
     /** Events written but not yet on Kafka. Alert on growth: relay or brokers are down. */
@@ -58,7 +60,7 @@ public class OutboxConfiguration {
      */
     @Bean
     Gauge outboxParkedGauge(MeterRegistry registry, SpringDataOutboxRepository outbox) {
-        return Gauge.builder("outbox.parked.events", outbox,
+        return Gauge.builder("outbox.parked.rows", outbox,
                         o -> o.countByStatus(OutboxEventJpaEntity.Status.PARKED))
                 .description("Pay request events parked by the outbox relay; their aggregates' later events wait")
                 .register(registry);

@@ -42,8 +42,30 @@ class OutboxConfigurationTest {
         configuration.outboxOldestPendingAgeGauge(registry, outbox, clock);
 
         assertThat(registry.get("outbox.pending.events").gauge().value()).isEqualTo(7.0);
-        assertThat(registry.get("outbox.parked.events").gauge().value()).isEqualTo(2.0);
+        assertThat(registry.get("outbox.parked.rows").gauge().value()).isEqualTo(2.0);
         assertThat(registry.get("outbox.oldest.pending.age.seconds").gauge().value()).isEqualTo(90.0);
+    }
+
+    /** Prometheus names as alerting sees them; the parked rows gauge must not clash with the parked events counter. */
+    @Test
+    void prometheusExposesTheGaugesAndTheParkedEventsCounterSideBySide() {
+        io.micrometer.prometheusmetrics.PrometheusMeterRegistry registry =
+                new io.micrometer.prometheusmetrics.PrometheusMeterRegistry(
+                        io.micrometer.prometheusmetrics.PrometheusConfig.DEFAULT);
+        when(outbox.oldestPendingOccurredAt()).thenReturn(Optional.of(NOW.minusSeconds(90)));
+        configuration.outboxPendingGauge(registry, outbox);
+        configuration.outboxParkedGauge(registry, outbox);
+        configuration.outboxOldestPendingAgeGauge(registry, outbox, clock);
+
+        registry.counter("outbox.parked.events", "exception", "RecordTooLargeException").increment();
+        registry.counter("outbox.send.failures", "exception", "TimeoutException").increment();
+
+        String scrape = registry.scrape();
+        assertThat(scrape).contains("outbox_parked_events_total{exception=\"RecordTooLargeException\"} 1.0")
+                .contains("outbox_send_failures_total{exception=\"TimeoutException\"} 1.0")
+                .contains("outbox_oldest_pending_age_seconds 90.0")
+                .contains("outbox_parked_rows ")
+                .contains("outbox_pending_events ");
     }
 
     @Test

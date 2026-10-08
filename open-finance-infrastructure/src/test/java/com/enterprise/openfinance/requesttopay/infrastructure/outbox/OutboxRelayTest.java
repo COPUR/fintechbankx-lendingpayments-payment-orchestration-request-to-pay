@@ -219,6 +219,10 @@ class OutboxRelayTest {
         assertThat(poison.getParkReason()).isEqualTo("payload error (relay)");
         assertThat(poison.getLastError()).startsWith(payloadError.getClass().getSimpleName());
         assertThat(failures(payloadError.getClass().getSimpleName())).isEqualTo(1.0);
+        assertThat(meters.get("outbox.parked.events").tag("exception", payloadError.getClass().getSimpleName())
+                .counter().count()).isEqualTo(1.0);
+        assertThat(meters.get("outbox.parked.events").counter().getId().getTags())
+                .extracting(io.micrometer.core.instrument.Tag::getKey).containsExactly("exception");
         assertThat(sameAggregateLater.getStatus()).isEqualTo(OutboxEventJpaEntity.Status.PENDING);
         assertThat(sameAggregateLater.getAttempts()).isZero();
         assertThat(otherAggregate.getStatus()).isEqualTo(OutboxEventJpaEntity.Status.PUBLISHED);
@@ -245,6 +249,7 @@ class OutboxRelayTest {
         assertThat(first.getLastError()).isNull();
         assertThat(otherAggregate.getAttempts()).isZero();
         assertThat(failures(failure.getClass().getSimpleName())).isEqualTo(1.0);
+        assertThat(meters.find("outbox.parked.events").counter()).isNull();
         verify(kafka, times(1)).send(any(ProducerRecord.class));
         assertThat(lock.released).isTrue();
         assertThat(relay.consecutiveFailedRuns()).isEqualTo(1);

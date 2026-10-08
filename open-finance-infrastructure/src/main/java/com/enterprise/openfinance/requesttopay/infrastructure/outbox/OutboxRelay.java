@@ -46,7 +46,8 @@ import io.micrometer.core.instrument.MeterRegistry;
  * <ul>
  *   <li>payload error that can never succeed for that row (RecordTooLarge,
  *   Serialization, InvalidTopic): the row is PARKED (error, parked_at and
- *   park_reason recorded; outbox.parked.events alerts), its aggregate's later
+ *   park_reason recorded; outbox.parked.events counter and outbox.parked.rows gauge alert),
+ *   its aggregate's later
  *   rows stay pending, and the batch continues with other aggregates;</li>
  *   <li>every other error (broker timeouts and other retriable errors, SASL/IAM
  *   authentication, topic authorisation, producer construction, unclassified):
@@ -179,7 +180,7 @@ public class OutboxRelay {
                 if (classify(e) == Failure.PAYLOAD) {
                     // later rows of this aggregate wait behind the parked row
                     blockedAggregates.add(row.getAggregateId());
-                    park(row, describe(e));
+                    park(row, exception, describe(e));
                     continue;
                 }
                 log.error("Outbox relay stopped at event {} for {} ({}); nothing marked, retried after backoff",
@@ -192,8 +193,9 @@ public class OutboxRelay {
         return sent;
     }
 
-    private void park(OutboxEventJpaEntity row, String error) {
+    private void park(OutboxEventJpaEntity row, String exception, String error) {
         Instant now = clock.instant();
+        meters.counter("outbox.parked.events", "exception", exception).increment();
         update(row.getEventId(), r -> r.park(error, PAYLOAD_PARK_REASON, now));
         log.error("Outbox relay parked event {} for {}: {}; its aggregate's later events wait; replay it by hand",
                 row.getEventId(), row.getTopic(), error);

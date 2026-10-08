@@ -44,9 +44,16 @@ no `db/backfill` or data-split CI job. Pay requests that are open in the monolit
 they live only in that process's memory and expire with it, as they do today on every restart.
 
 Flyway migrations: `open-finance-infrastructure/src/main/resources/db/migration/V1__create_pay_request_tables.sql`,
-`V2__create_outbox.sql`, `V3__outbox_failure_policy.sql`, `V4__outbox_park_counted.sql` and
+`V2__create_outbox.sql`, `V3__outbox_failure_policy.sql`, `V4__outbox_park_counted.sql`,
 `V5__grant_runtime_role_least_privilege.sql` (runtime role DML only) and `V6__grant_runtime_role_sequences.sql`
-(runtime role USAGE, SELECT on sequences), all run as the migration role by the migration Job. V1 replaces the seed
+(runtime role USAGE, SELECT on sequences), all run as the migration role by the migration Job.
+
+V4 was edited in place before any release (a comment on the best-effort parked counter), so its Flyway checksum
+changed. A database that already ran the earlier V4 (a developer or CI database; no release exists) fails
+validation with "Migration checksum mismatch for migration version 4". Fix it either way, as the migration role:
+recreate the schema (drop `sc_pay_request_to_pay`, recreate it owned by the migration role, run the migration Job)
+or run `flyway repair` against it, which only rewrites the stored checksum. Never edit an applied migration after
+the first release; add a new version instead. V1 replaces the seed
 migration `V1__Create_pay_requests_table.sql` (schema `pis`), which no environment ever applied because the seed had
 no runnable application. The service never reads monolith tables and no other service reads `sc_pay_request_to_pay`.
 

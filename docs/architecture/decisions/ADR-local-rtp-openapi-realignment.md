@@ -127,7 +127,7 @@ Changes oasdiff does not report, also covered by this decision:
 3. **Parked events:** a parked event keeps the later events of its pay request pending until an operator replays
    it (ADR-021 decision 4). Confirm this is wanted over publishing later events with a gap.
 
-Reversibility: **reversible until the first TPP integrates, irreversible after.** Until then the paths, field names
-and the spec version can change freely (nothing serves or calls this spec yet). Once a TPP integrates against
-`/open-finance/v1`, any rename or removal needs a new major version with a migration window. Consider keeping the
-spec below 1.0.0 until the naming question above is settled.
+Reversibility: **reversible until the first TPP integrates, irreversible after.** The naming can still change
+before the first TPP integrates (nothing serves or calls this spec yet); the version stays 1.0.0 (pre-release rule:
+a spec stays 1.0.0 until it first lands on the catalog's main). Once a TPP integrates against `/open-finance/v1`,
+any rename or removal needs a new major version with a migration window.

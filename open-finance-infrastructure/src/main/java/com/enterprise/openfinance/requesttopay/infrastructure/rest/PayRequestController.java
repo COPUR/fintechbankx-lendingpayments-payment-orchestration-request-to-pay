@@ -106,7 +106,8 @@ public class PayRequestController {
         String tppId = TppIdentity.resolve(financialId);
 
         String paymentId = decision == null ? null : decision.paymentId();
-        var result = useCase.acceptPayRequest(consentId, tppId, paymentId, interactionId);
+        String reason = decision == null ? null : decision.reason();
+        var result = useCase.acceptPayRequest(consentId, tppId, paymentId, reason, interactionId);
         String self = SELF_PREFIX + consentId;
 
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -126,7 +127,8 @@ public class PayRequestController {
     ) {
         String tppId = TppIdentity.resolve(financialId);
 
-        var result = useCase.rejectPayRequest(consentId, tppId, interactionId);
+        String reason = decision == null ? null : decision.reason();
+        var result = useCase.rejectPayRequest(consentId, tppId, reason, interactionId);
         String self = SELF_PREFIX + consentId;
 
         return ResponseEntity.ok()

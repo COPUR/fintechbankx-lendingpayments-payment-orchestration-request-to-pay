@@ -92,7 +92,7 @@ class PayRequestControllerUnitTest {
     @Test
     void shouldAcceptAndRejectPayRequest() {
         PayRequest consumed = sampleRequest(PayRequestStatus.CONSUMED, "PAY-123");
-        Mockito.when(useCase.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", "ix-request-to-pay-2"))
+        Mockito.when(useCase.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", null, "ix-request-to-pay-2"))
                 .thenReturn(new PayRequestResult(consumed, false));
 
         ResponseEntity<PayRequestStatusResponse> accept = controller.acceptPayRequest(
@@ -107,7 +107,7 @@ class PayRequestControllerUnitTest {
         assertThat(accept.getBody().data().status()).isEqualTo("Consumed");
 
         PayRequest rejected = sampleRequest(PayRequestStatus.REJECTED, null);
-        Mockito.when(useCase.rejectPayRequest("CONS-001", "TPP-001", "ix-request-to-pay-3"))
+        Mockito.when(useCase.rejectPayRequest("CONS-001", "TPP-001", "User rejected", "ix-request-to-pay-3"))
                 .thenReturn(new PayRequestResult(rejected, false));
 
         ResponseEntity<PayRequestStatusResponse> reject = controller.rejectPayRequest(

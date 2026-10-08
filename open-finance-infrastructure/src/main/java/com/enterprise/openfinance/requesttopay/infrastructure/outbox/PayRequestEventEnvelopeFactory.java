@@ -61,8 +61,12 @@ public class PayRequestEventEnvelopeFactory {
                     "amount", decimal(e.amount()),
                     "currency", e.currency(),
                     "creditorName", e.creditorName(),
-                    "debtorId", e.debtorId()));
-            case PayRequestRejectedEvent e -> new PublicEvent("rejected", "Rejected", data());
+                    "debtorId", e.debtorId(),
+                    "actorClientId", e.actorClientId(),
+                    "reason", e.reason()));
+            case PayRequestRejectedEvent e -> new PublicEvent("rejected", "Rejected", data(
+                    "actorClientId", e.actorClientId(),
+                    "reason", e.reason()));
         };
     }
 
@@ -70,10 +74,13 @@ public class PayRequestEventEnvelopeFactory {
         return amount.toPlainString();
     }
 
+    /** Optional fields (actorClientId, reason) are left out when absent rather than sent as null. */
     private static Map<String, Object> data(Object... keyValues) {
         Map<String, Object> map = new LinkedHashMap<>();
         for (int i = 0; i < keyValues.length; i += 2) {
-            map.put((String) keyValues[i], keyValues[i + 1]);
+            if (keyValues[i + 1] != null) {
+                map.put((String) keyValues[i], keyValues[i + 1]);
+            }
         }
         return map;
     }

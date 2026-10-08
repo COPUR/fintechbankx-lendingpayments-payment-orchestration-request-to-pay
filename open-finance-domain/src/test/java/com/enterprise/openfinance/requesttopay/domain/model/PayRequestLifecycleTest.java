@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.requesttopay.domain.model;
 
+import com.enterprise.openfinance.requesttopay.domain.model.valueobject.DecisionBy;
 import com.enterprise.openfinance.requesttopay.domain.command.CreatePayRequestCommand;
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestAcceptedEvent;
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestCreatedEvent;
@@ -44,7 +45,7 @@ class PayRequestLifecycleTest {
     @Test
     void consumeRegistersAcceptedEventAndBumpsVersion() {
         PayRequest consumed = PayRequest.create("CONS-RTP-1", command("500.00", "AED"), CREATED)
-                .consume("PAY-77", DECIDED);
+                .consume("PAY-77", new DecisionBy("TPP-001", null), DECIDED);
 
         assertThat(consumed.version()).isEqualTo(1);
         assertThat(consumed.domainEvents()).singleElement().isInstanceOfSatisfying(PayRequestAcceptedEvent.class, e -> {
@@ -57,7 +58,7 @@ class PayRequestLifecycleTest {
 
     @Test
     void rejectRegistersRejectedEventAndBumpsVersion() {
-        PayRequest rejected = PayRequest.create("CONS-RTP-1", command("500.00", "AED"), CREATED).reject(DECIDED);
+        PayRequest rejected = PayRequest.create("CONS-RTP-1", command("500.00", "AED"), CREATED).reject(new DecisionBy("TPP-001", null), DECIDED);
 
         assertThat(rejected.version()).isEqualTo(1);
         assertThat(rejected.domainEvents()).singleElement().isInstanceOfSatisfying(PayRequestRejectedEvent.class,
@@ -66,19 +67,19 @@ class PayRequestLifecycleTest {
 
     @Test
     void finalizedRequestRejectsEveryFurtherDecisionWithTheDomainException() {
-        PayRequest consumed = PayRequest.create("CONS-RTP-1", command("500.00", "AED"), CREATED).consume("PAY-77", DECIDED);
-        PayRequest rejected = PayRequest.create("CONS-RTP-2", command("500.00", "AED"), CREATED).reject(DECIDED);
+        PayRequest consumed = PayRequest.create("CONS-RTP-1", command("500.00", "AED"), CREATED).consume("PAY-77", new DecisionBy("TPP-001", null), DECIDED);
+        PayRequest rejected = PayRequest.create("CONS-RTP-2", command("500.00", "AED"), CREATED).reject(new DecisionBy("TPP-001", null), DECIDED);
 
-        assertThatThrownBy(() -> consumed.reject(DECIDED)).isInstanceOf(PayRequestFinalizedException.class);
-        assertThatThrownBy(() -> consumed.consume("PAY-78", DECIDED)).isInstanceOf(PayRequestFinalizedException.class);
-        assertThatThrownBy(() -> rejected.consume("PAY-78", DECIDED)).isInstanceOf(PayRequestFinalizedException.class);
+        assertThatThrownBy(() -> consumed.reject(new DecisionBy("TPP-001", null), DECIDED)).isInstanceOf(PayRequestFinalizedException.class);
+        assertThatThrownBy(() -> consumed.consume("PAY-78", new DecisionBy("TPP-001", null), DECIDED)).isInstanceOf(PayRequestFinalizedException.class);
+        assertThatThrownBy(() -> rejected.consume("PAY-78", new DecisionBy("TPP-001", null), DECIDED)).isInstanceOf(PayRequestFinalizedException.class);
     }
 
     @Test
     void consumeRequiresThePaymentId() {
         PayRequest request = PayRequest.create("CONS-RTP-1", command("500.00", "AED"), CREATED);
 
-        assertThatThrownBy(() -> request.consume(" ", DECIDED))
+        assertThatThrownBy(() -> request.consume(" ", new DecisionBy("TPP-001", null), DECIDED))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("paymentId");
     }
 

@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.outbox;
 
+import com.enterprise.openfinance.requesttopay.domain.model.valueobject.DecisionBy;
 import com.enterprise.openfinance.requesttopay.domain.command.CreatePayRequestCommand;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -53,7 +54,7 @@ class PayRequestEventEnvelopeFactoryTest {
 
     @Test
     void acceptedEnvelopeCarriesPaymentIdAndVersionOne() throws Exception {
-        PayRequest accepted = PayRequest.create("CONS-RTP-1", command(), NOW).consume("PAY-9", NOW.plusSeconds(60));
+        PayRequest accepted = PayRequest.create("CONS-RTP-1", command(), NOW).consume("PAY-9", new DecisionBy("TPP-001", null), NOW.plusSeconds(60));
 
         OutboxEventJpaEntity row = factory.toOutboxRow(accepted, accepted.domainEvents().getFirst(), "ix-43");
         JsonNode envelope = json.readTree(row.getPayload());
@@ -63,19 +64,23 @@ class PayRequestEventEnvelopeFactoryTest {
         assertThat(envelope.get("aggregateVersion").asLong()).isEqualTo(1);
         assertThat(envelope.get("data").get("paymentId").asText()).isEqualTo("PAY-9");
         assertThat(envelope.get("data").get("amount").asText()).isEqualTo("500.00");
+        assertThat(envelope.get("data").get("actorClientId").asText()).isEqualTo("TPP-001");
+        assertThat(envelope.get("data").has("reason")).isFalse();
     }
 
     @Test
-    void rejectedEnvelopeHasAnEmptyDataObject() throws Exception {
-        PayRequest rejected = PayRequest.create("CONS-RTP-1", command(), NOW).reject(NOW.plusSeconds(60));
+    void rejectedEnvelopeNamesTheDecidingClientAndTheReason() throws Exception {
+        PayRequest rejected = PayRequest.create("CONS-RTP-1", command(), NOW)
+                .reject(new DecisionBy("TPP-001", "debtor declined"), NOW.plusSeconds(60));
 
         OutboxEventJpaEntity row = factory.toOutboxRow(rejected, rejected.domainEvents().getFirst(), "ix-44");
         JsonNode envelope = json.readTree(row.getPayload());
 
         assertThat(row.getTopic()).isEqualTo("evt.pay.rtp.rejected.v1");
         assertThat(envelope.get("eventType").asText()).isEqualTo("Payments.PayRequest.Rejected.v1");
-        assertThat(envelope.get("data").isObject()).isTrue();
-        assertThat(envelope.get("data").size()).isZero();
+        assertThat(envelope.get("data").get("actorClientId").asText()).isEqualTo("TPP-001");
+        assertThat(envelope.get("data").get("reason").asText()).isEqualTo("debtor declined");
+        assertThat(envelope.get("data").size()).isEqualTo(2);
     }
 
     private static CreatePayRequestCommand command() {

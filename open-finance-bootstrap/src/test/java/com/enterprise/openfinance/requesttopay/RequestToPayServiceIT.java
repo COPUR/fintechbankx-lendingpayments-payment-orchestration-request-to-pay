@@ -186,6 +186,44 @@ class RequestToPayServiceIT {
     }
 
     @Test
+    void aRepeatedDecisionReturnsTheCurrentStateAndPublishesNothingNew() throws Exception {
+        String accepted = create("idem-repeat-a", "15.00", "ix-repeat-a");
+        for (int call = 0; call < 2; call++) {
+            mvc.perform(asTpp(post("/open-finance/v1/payment-consents/{id}/accept", accepted))
+                            .header("X-FAPI-Interaction-ID", "ix-repeat-accept-" + call)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\": \"PAY-R1\"}"))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.Data.Status").value("Consumed"))
+                    .andExpect(jsonPath("$.Data.PaymentId").value("PAY-R1"));
+        }
+        mvc.perform(asTpp(post("/open-finance/v1/payment-consents/{id}/accept", accepted))
+                        .header("X-FAPI-Interaction-ID", "ix-repeat-other")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\": \"PAY-R2\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("REQUEST_FINALIZED"));
+
+        String rejected = create("idem-repeat-r", "16.00", "ix-repeat-r");
+        for (int call = 0; call < 2; call++) {
+            mvc.perform(asTpp(post("/open-finance/v1/payment-consents/{id}/reject", rejected))
+                            .header("X-FAPI-Interaction-ID", "ix-repeat-reject-" + call)
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"reason\": \"debtor declined\"}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.Data.Status").value("Rejected"));
+        }
+
+        assertThat(jdbc.queryForObject("select version from " + SCHEMA + ".pay_request where consent_id = ?",
+                Long.class, accepted)).isEqualTo(1L);
+        assertThat(jdbc.queryForObject("select version from " + SCHEMA + ".pay_request where consent_id = ?",
+                Long.class, rejected)).isEqualTo(1L);
+        // created + accepted, created + rejected: the repeats published nothing
+        assertThat(count("outbox_event")).isEqualTo(4);
+        JsonNode rejectedEvent = json.readTree(jdbc.queryForObject("select payload::text from " + SCHEMA
+                + ".outbox_event where aggregate_id = ? and aggregate_version = 1", String.class, rejected));
+        assertThat(rejectedEvent.get("data").get("actorClientId").asText()).isEqualTo("TPP-001");
+        assertThat(rejectedEvent.get("data").get("reason").asText()).isEqualTo("debtor declined");
+    }
+
+    @Test
     void anotherTppCannotReadOrDecideTheRequest() throws Exception {
         String consentId = create("idem-own", "10.00", "ix-own");
 
@@ -258,8 +296,8 @@ class RequestToPayServiceIT {
                 new BigDecimal("40.00"), "AED", Instant.now(), "ix-c")).request().consentId();
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);
-        Future<Object> accept = pool.submit(() -> decide(start, () -> useCase.acceptPayRequest(consentId, "TPP-001", "PAY-1", "ix-a")));
-        Future<Object> reject = pool.submit(() -> decide(start, () -> useCase.rejectPayRequest(consentId, "TPP-001", "ix-r")));
+        Future<Object> accept = pool.submit(() -> decide(start, () -> useCase.acceptPayRequest(consentId, "TPP-001", "PAY-1", null, "ix-a")));
+        Future<Object> reject = pool.submit(() -> decide(start, () -> useCase.rejectPayRequest(consentId, "TPP-001", null, "ix-r")));
         start.countDown();
 
         List<Object> outcomes = List.of(accept.get(), reject.get());

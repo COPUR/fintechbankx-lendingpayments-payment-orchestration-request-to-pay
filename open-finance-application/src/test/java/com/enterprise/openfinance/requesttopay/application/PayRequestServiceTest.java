@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.requesttopay.application;
 
+import com.enterprise.openfinance.requesttopay.domain.model.valueobject.DecisionBy;
 import com.enterprise.openfinance.requesttopay.domain.command.CreatePayRequestCommand;
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestAcceptedEvent;
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestCreatedEvent;
@@ -121,10 +122,10 @@ class PayRequestServiceTest {
 
     @Test
     void shouldRejectDuplicateFinalize() {
-        PayRequest request = baseRequest().consume("PAY-001", Instant.parse("2026-02-10T11:00:00Z"));
+        PayRequest request = baseRequest().consume("PAY-001", new DecisionBy("TPP-001", null), Instant.parse("2026-02-10T11:00:00Z"));
         when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(request));
 
-        assertThatThrownBy(() -> service.rejectPayRequest("CONS-001", "TPP-001", "ix"))
+        assertThatThrownBy(() -> service.rejectPayRequest("CONS-001", "TPP-001", null, "ix"))
                 .isInstanceOf(PayRequestFinalizedException.class)
                 .hasMessageContaining("finalized");
     }
@@ -145,7 +146,7 @@ class PayRequestServiceTest {
         when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(request));
         when(repositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        PayRequestResult result = service.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", "ix");
+        PayRequestResult result = service.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", null, "ix");
 
         assertThat(result.status()).isEqualTo(PayRequestStatus.CONSUMED);
         ArgumentCaptor<PayRequest> captor = ArgumentCaptor.forClass(PayRequest.class);
@@ -158,7 +159,7 @@ class PayRequestServiceTest {
         when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(baseRequest()));
         when(repositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        service.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", "ix-accept");
+        service.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", null, "ix-accept");
 
         ArgumentCaptor<List<PayRequestDomainEvent>> events = eventsCaptor();
         verify(eventPublisher).publish(any(), events.capture(), eq("ix-accept"));
@@ -172,7 +173,7 @@ class PayRequestServiceTest {
         when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(baseRequest()));
         when(repositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-        PayRequestResult result = service.rejectPayRequest("CONS-001", "TPP-001", "ix-reject");
+        PayRequestResult result = service.rejectPayRequest("CONS-001", "TPP-001", null, "ix-reject");
 
         assertThat(result.status()).isEqualTo(PayRequestStatus.REJECTED);
         assertThat(result.request().version()).isEqualTo(1);
@@ -182,10 +183,54 @@ class PayRequestServiceTest {
     }
 
     @Test
+    void repeatedAcceptWithTheSamePaymentIdReturnsTheCurrentStateWithoutSavingOrPublishing() {
+        PayRequest consumed = new PayRequest("CONS-001", "TPP-001", "PSU-001", "Utilities Co", new BigDecimal("500.00"),
+                "AED", PayRequestStatus.CONSUMED, Instant.parse("2026-02-10T09:00:00Z"),
+                Instant.parse("2026-02-10T09:30:00Z"), "PAY-123", 1L);
+        when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(consumed));
+
+        PayRequestResult result = service.acceptPayRequest("CONS-001", "TPP-001", "PAY-123", null, "ix-retry");
+
+        assertThat(result.status()).isEqualTo(PayRequestStatus.CONSUMED);
+        assertThat(result.request().version()).isEqualTo(1);
+        verify(repositoryPort, never()).save(any());
+        verify(eventPublisher, never()).publish(any(), anyList(), any());
+    }
+
+    @Test
+    void repeatedRejectReturnsTheCurrentStateWithoutSavingOrPublishing() {
+        PayRequest rejected = new PayRequest("CONS-001", "TPP-001", "PSU-001", "Utilities Co", new BigDecimal("500.00"),
+                "AED", PayRequestStatus.REJECTED, Instant.parse("2026-02-10T09:00:00Z"),
+                Instant.parse("2026-02-10T09:30:00Z"), null, 1L);
+        when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(rejected));
+
+        PayRequestResult result = service.rejectPayRequest("CONS-001", "TPP-001", null, "ix-retry");
+
+        assertThat(result.status()).isEqualTo(PayRequestStatus.REJECTED);
+        verify(repositoryPort, never()).save(any());
+        verify(eventPublisher, never()).publish(any(), anyList(), any());
+    }
+
+    @Test
+    void theDecisionEventNamesTheDecidingClientAndTheReason() {
+        when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(baseRequest()));
+        when(repositoryPort.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.rejectPayRequest("CONS-001", "TPP-001", "debtor declined", "ix-reject");
+
+        ArgumentCaptor<List<PayRequestDomainEvent>> events = eventsCaptor();
+        verify(eventPublisher).publish(any(), events.capture(), eq("ix-reject"));
+        assertThat(events.getValue()).singleElement().isInstanceOfSatisfying(PayRequestRejectedEvent.class, e -> {
+            assertThat(e.actorClientId()).isEqualTo("TPP-001");
+            assertThat(e.reason()).isEqualTo("debtor declined");
+        });
+    }
+
+    @Test
     void decisionOnUnknownRequestIsNotFoundAndPublishesNothing() {
         when(repositoryPort.findByConsentIdForUpdate("CONS-404")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> service.acceptPayRequest("CONS-404", "TPP-001", "PAY-1", "ix"))
+        assertThatThrownBy(() -> service.acceptPayRequest("CONS-404", "TPP-001", "PAY-1", null, "ix"))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(eventPublisher, never()).publish(any(), anyList(), any());
     }
@@ -194,7 +239,7 @@ class PayRequestServiceTest {
     void decisionByAnotherTppIsRefusedAndNothingIsSaved() {
         when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(baseRequest()));
 
-        assertThatThrownBy(() -> service.rejectPayRequest("CONS-001", "TPP-XYZ", "ix"))
+        assertThatThrownBy(() -> service.rejectPayRequest("CONS-001", "TPP-XYZ", null, "ix"))
                 .isInstanceOf(PayRequestAccessDeniedException.class).hasMessageContaining("participant");
         verify(repositoryPort, never()).save(any());
     }

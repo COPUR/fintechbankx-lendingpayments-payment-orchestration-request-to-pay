@@ -6,6 +6,7 @@ import com.enterprise.openfinance.requesttopay.domain.event.PayRequestCreatedEve
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestDomainEvent;
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestRejectedEvent;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
+import com.enterprise.openfinance.requesttopay.domain.model.valueobject.DecisionBy;
 import com.enterprise.openfinance.requesttopay.domain.model.valueobject.Money;
 
 import java.math.BigDecimal;
@@ -77,7 +78,7 @@ public record PayRequest(
         this(consentId, tppId, psuId, creditorName, amount, currency, status, requestedAt, updatedAt, paymentId, 0L);
     }
 
-    /** A new request awaiting the debtor's authorisation; registers PayRequestCreatedEvent. */
+    /** A new request awaiting the decision; registers PayRequestCreatedEvent. */
     public static PayRequest create(String consentId, CreatePayRequestCommand command, Instant now) {
         PayRequest draft = new PayRequest(consentId, command.tppId(), command.psuId(), command.creditorName(),
                 command.amount(), command.currency(), PayRequestStatus.AWAITING_AUTHORISATION,
@@ -94,22 +95,38 @@ public record PayRequest(
         return status.isFinal();
     }
 
-    /** The debtor declined; registers PayRequestRejectedEvent. */
-    public PayRequest reject(Instant now) {
+    /**
+     * The requesting TPP reported that the debtor declined; registers PayRequestRejectedEvent.
+     * Repeating a reject on a rejected request changes nothing and registers no event
+     * (a retried call gets the current state).
+     */
+    public PayRequest reject(DecisionBy decision, Instant now) {
+        requireDecision(decision);
+        if (status == PayRequestStatus.REJECTED) {
+            return withoutEvents();
+        }
         ensureNotFinalized();
         PayRequest next = new PayRequest(consentId, tppId, psuId, creditorName, money,
                 PayRequestStatus.REJECTED, requestedAt, now, paymentId, version + 1, List.of());
-        return next.withEvent(new PayRequestRejectedEvent(consentId, now));
+        return next.withEvent(new PayRequestRejectedEvent(consentId, decision.actorClientId(), decision.reason(), now));
     }
 
-    /** The debtor accepted and a payment was created; registers PayRequestAcceptedEvent. */
-    public PayRequest consume(String paymentIdValue, Instant now) {
-        ensureNotFinalized();
+    /**
+     * The requesting TPP reported acceptance with {@code paymentIdValue} (not verified against a
+     * payment); registers PayRequestAcceptedEvent. Repeating the accept with the same paymentId
+     * changes nothing and registers no event; another paymentId is refused.
+     */
+    public PayRequest consume(String paymentIdValue, DecisionBy decision, Instant now) {
+        requireDecision(decision);
         String resolvedPaymentId = requireNotBlank(paymentIdValue, "paymentId");
+        if (status == PayRequestStatus.CONSUMED && resolvedPaymentId.equals(paymentId)) {
+            return withoutEvents();
+        }
+        ensureNotFinalized();
         PayRequest next = new PayRequest(consentId, tppId, psuId, creditorName, money,
                 PayRequestStatus.CONSUMED, requestedAt, now, resolvedPaymentId, version + 1, List.of());
         return next.withEvent(new PayRequestAcceptedEvent(consentId, resolvedPaymentId, amount(), currency(),
-                creditorName, psuId, now));
+                creditorName, psuId, decision.actorClientId(), decision.reason(), now));
     }
 
     /** Requested amount at the currency's minor unit. */
@@ -129,6 +146,17 @@ public record PayRequest(
     private PayRequest withEvent(PayRequestDomainEvent event) {
         return new PayRequest(consentId, tppId, psuId, creditorName, money, status, requestedAt,
                 updatedAt, paymentId, version, List.of(event));
+    }
+
+    private PayRequest withoutEvents() {
+        return new PayRequest(consentId, tppId, psuId, creditorName, money, status, requestedAt,
+                updatedAt, paymentId, version, List.of());
+    }
+
+    private static void requireDecision(DecisionBy decision) {
+        if (decision == null) {
+            throw new IllegalArgumentException("decision is required");
+        }
     }
 
     private void ensureNotFinalized() {

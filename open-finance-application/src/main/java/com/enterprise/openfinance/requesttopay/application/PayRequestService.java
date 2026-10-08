@@ -8,6 +8,7 @@ import com.enterprise.openfinance.requesttopay.domain.model.IdempotencyRecord;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestSettings;
+import com.enterprise.openfinance.requesttopay.domain.model.valueobject.DecisionBy;
 import com.enterprise.openfinance.requesttopay.domain.port.in.PayRequestUseCase;
 import com.enterprise.openfinance.requesttopay.domain.port.out.PayRequestCachePort;
 import com.enterprise.openfinance.requesttopay.domain.port.out.PayRequestEventPublisher;
@@ -99,14 +100,18 @@ public class PayRequestService implements PayRequestUseCase {
 
     @Override
     @Transactional
-    public PayRequestResult acceptPayRequest(String consentId, String tppId, String paymentId, String interactionId) {
-        return decide(consentId, tppId, interactionId, request -> request.consume(paymentId, Instant.now(clock)));
+    public PayRequestResult acceptPayRequest(String consentId, String tppId, String paymentId, String reason,
+                                             String interactionId) {
+        DecisionBy decision = new DecisionBy(tppId, reason);
+        return decide(consentId, tppId, interactionId,
+                request -> request.consume(paymentId, decision, Instant.now(clock)));
     }
 
     @Override
     @Transactional
-    public PayRequestResult rejectPayRequest(String consentId, String tppId, String interactionId) {
-        return decide(consentId, tppId, interactionId, request -> request.reject(Instant.now(clock)));
+    public PayRequestResult rejectPayRequest(String consentId, String tppId, String reason, String interactionId) {
+        DecisionBy decision = new DecisionBy(tppId, reason);
+        return decide(consentId, tppId, interactionId, request -> request.reject(decision, Instant.now(clock)));
     }
 
     private PayRequestResult decide(String consentId, String tppId, String interactionId,
@@ -116,6 +121,10 @@ public class PayRequestService implements PayRequestUseCase {
         ensureOwnership(request, tppId);
 
         PayRequest decided = decision.apply(request);
+        if (decided.domainEvents().isEmpty()) {
+            // A repeated decision with the same outcome: answer with the current state.
+            return new PayRequestResult(decided, false);
+        }
         PayRequest saved = repositoryPort.save(decided);
         eventPublisher.publish(decided, decided.domainEvents(), interactionId);
 

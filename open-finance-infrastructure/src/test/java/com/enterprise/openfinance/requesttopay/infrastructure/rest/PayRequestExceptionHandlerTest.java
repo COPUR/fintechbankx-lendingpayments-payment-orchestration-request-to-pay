@@ -63,6 +63,21 @@ class PayRequestExceptionHandlerTest {
     }
 
     @Test
+    void shouldMapIllegalStateToInternalErrorWithAFixedMessage() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("X-FAPI-Interaction-ID", "ix-request-to-pay-err-5");
+
+        ResponseEntity<PayRequestErrorResponse> response = handler.handleIllegalState(
+                new IllegalStateException("Idempotency key neither reserved nor found"), request
+        );
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().code()).isEqualTo("INTERNAL_ERROR");
+        assertThat(response.getBody().message()).isEqualTo("Unexpected error occurred");
+    }
+
+    @Test
     void shouldMapUnexpectedError() {
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader("X-FAPI-Interaction-ID", "ix-request-to-pay-err-4");

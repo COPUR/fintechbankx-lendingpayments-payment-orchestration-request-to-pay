@@ -7,6 +7,8 @@ import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFound
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationException;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
@@ -24,6 +26,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice(basePackages = "com.enterprise.openfinance.requesttopay.infrastructure.rest")
 public class PayRequestExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(PayRequestExceptionHandler.class);
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<PayRequestErrorResponse> handleNotFound(ResourceNotFoundException exception,
@@ -71,11 +75,24 @@ public class PayRequestExceptionHandler {
                         interactionId(request)));
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
-    public ResponseEntity<PayRequestErrorResponse> handleInvalidRequest(RuntimeException exception,
+    /** Rejected input (domain and value-object validation). The only 400 for a plain JDK exception. */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleInvalidRequest(IllegalArgumentException exception,
                                                                         HttpServletRequest request) {
         return ResponseEntity.badRequest()
                 .body(PayRequestErrorResponse.of("INVALID_REQUEST", exception.getMessage(), interactionId(request)));
+    }
+
+    /**
+     * A broken invariant inside the service is not the caller's fault: 500 with a fixed
+     * message, so internal state (ids, SQL outcomes) never reaches the TPP.
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleIllegalState(IllegalStateException exception,
+                                                                      HttpServletRequest request) {
+        log.error("Internal error on {}", request.getRequestURI(), exception);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(PayRequestErrorResponse.of("INTERNAL_ERROR", "Unexpected error occurred", interactionId(request)));
     }
 
     @ExceptionHandler(DPoPValidationException.class)

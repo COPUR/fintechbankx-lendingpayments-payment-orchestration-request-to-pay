@@ -88,6 +88,18 @@ class PayRequestErrorResponsesOverHttpTest {
         assertThat(response.statusCode()).isEqualTo(404);
     }
 
+    @Test
+    void anIllegalStateIsAnInternalErrorWithAFixedMessage() throws Exception {
+        when(payRequestUseCase.getPayRequestStatus(any()))
+                .thenThrow(new IllegalStateException("Idempotency key neither reserved nor found for CONS-RTP-secret"));
+
+        HttpResponse<String> response = send(HttpMethod.GET, "/open-finance/v1/payment-consents/c-1", null, null);
+
+        assertThat(response.statusCode()).isEqualTo(500);
+        assertThat(response.body()).contains("INTERNAL_ERROR").contains("Unexpected error occurred")
+                .doesNotContain("CONS-RTP-secret").doesNotContain("Idempotency key");
+    }
+
     private HttpResponse<String> send(HttpMethod method, String path, String contentType, String body)
             throws Exception {
         String url = "http://localhost:" + port + path;

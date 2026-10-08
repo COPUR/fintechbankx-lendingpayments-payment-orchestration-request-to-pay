@@ -22,14 +22,19 @@ spec:
     metadata:
       labels:
         {{- include "rtp.selectorLabels" . | nindent 8 }}
-        app: {{ include "rtp.name" . }}
+        app: {{ .Values.serviceAccount.name }}
         version: {{ .Values.image.tag | quote }}
         app.kubernetes.io/part-of: fintechbankx-payments
+        # Observability's PodMonitor fintechbankx-services selects this label.
         fintechbankx.io/service-id: svc-pay-request-to-pay
         fintechbankx.io/app: app-pay-request-to-pay
+        fintechbankx.io/squad: {{ .Values.squad }}
         sidecar.istio.io/inject: "true"
       annotations:
         sidecar.istio.io/inject: "true"
+        # Keep the sidecar draining for longer than the app's graceful shutdown
+        # (preStop 10 s + spring.lifecycle 40 s), within terminationGracePeriodSeconds.
+        proxy.istio.io/config: '{"terminationDrainDuration": "55s"}'
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ .Values.service.managementPort | quote }}
@@ -40,8 +45,9 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      # preStop sleep 10 s + spring.lifecycle.timeout-per-shutdown-phase 40 s + 10 s margin
-      terminationGracePeriodSeconds: 60
+      # Above the sidecar drain (55 s), which covers preStop 10 s +
+      # spring.lifecycle.timeout-per-shutdown-phase 40 s, so neither is killed mid-drain.
+      terminationGracePeriodSeconds: 65
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -74,6 +80,13 @@ spec:
           env:
             - name: SPRING_PROFILES_ACTIVE
               value: {{ .Values.kafka.profile | quote }}
+            # Migrations run only in the pre-install/pre-upgrade Job as the
+            # schema owner; the pods hold the runtime role and never migrate.
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
+            # Path of the mounted RDS CA bundle (cicd-templates 4f0f266).
+            - name: DB_SSL_ROOT_CERT
+              value: {{ include "rtp.databaseCaPath" . | quote }}
             {{- if eq .Values.kafka.profile "kafka-strimzi" }}
             - name: KAFKA_TLS_CERT
               valueFrom:
@@ -85,10 +98,12 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.kafka.strimziTlsSecret }}
                   key: user.key
+            # The broker is trusted through the Strimzi cluster CA (event-streaming
+            # 5f7d546), not the client CA in the KafkaUser secret.
             - name: KAFKA_TLS_CA
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafka.strimziTlsSecret }}
+                  name: {{ required "kafka.strimziClusterCaSecret is required" .Values.kafka.strimziClusterCaSecret }}
                   key: ca.crt
             {{- end }}
           envFrom:
@@ -130,6 +145,17 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: database-ca
+              mountPath: {{ .Values.databaseCa.mountPath }}
+              readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
+        # Platform ConfigMap (trust-manager); not optional, so a missing bundle
+        # stops the pod instead of letting it connect unverified.
+        - name: database-ca
+          configMap:
+            name: {{ .Values.databaseCa.configMapName }}
+            items:
+              - key: {{ .Values.databaseCa.key }}
+                path: {{ .Values.databaseCa.key }}

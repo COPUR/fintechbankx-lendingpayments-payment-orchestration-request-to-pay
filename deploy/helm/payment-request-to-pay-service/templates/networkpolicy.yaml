@@ -1,6 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
-# L3/L4 guard in addition to the mesh's default-deny AuthorizationPolicy
-# (the mesh repository owns the ALLOW rules for caller principals).
+# Opt-in only: NetworkPolicy belongs to the mesh repo (cicd-templates 1dd1138).
+# Namespaces only, never a CIDR. The mesh (default-deny AuthorizationPolicy,
+# STRICT mTLS) authorises callers by principal on top of this.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -21,17 +22,17 @@ spec:
               kubernetes.io/metadata.name: {{ . }}
         {{- end }}
       ports:
-        - port: 8080
+        - port: {{ .Values.service.port }}
           protocol: TCP
+    # Scrape: the observability PodMonitor reads Istio's merged metrics on
+    # 15020 (app 8081 and Envoy); 15020 and 8081 from that namespace only.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: observability
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace }}
       ports:
-        - port: 8081
-          protocol: TCP
-    # Kubelet probes are rewritten by Istio to the sidecar's port 15020.
-    - ports:
         - port: 15020
+          protocol: TCP
+        - port: {{ .Values.service.managementPort }}
           protocol: TCP
 {{- end }}

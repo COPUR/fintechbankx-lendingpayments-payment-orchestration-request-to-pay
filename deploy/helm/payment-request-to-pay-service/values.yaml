@@ -34,19 +34,29 @@ autoscaling:
 podDisruptionBudget:
   minAvailable: 2
 
+# Owning squad, rendered as the common label fintechbankx.io/squad on every
+# object and pod (platform review round 2: payments).
+squad: payments
+
 kafka:
   # kafka-msk (Amazon MSK, IAM auth via IRSA) or kafka-strimzi (in-cluster, TLS client certificate).
   profile: kafka-msk
-  # Secret with user.crt, user.key, ca.crt (kafka-strimzi only).
+  # KafkaUser secret with user.crt and user.key (kafka-strimzi only).
   strimziTlsSecret: kafka-client-tls
+  # The broker is trusted through the Strimzi cluster CA: a copy in this
+  # namespace of <cluster>-cluster-ca-cert, key ca.crt (event-streaming 5f7d546).
+  strimziClusterCaSecret: fintechbankx-cluster-ca-cert
 
 # Non-secret runtime settings, rendered into a ConfigMap. The first four are required.
 config:
-  DB_URL: ""                      # jdbc:postgresql://<aurora-writer>:5432/db_pay_request_to_pay_<env>?sslmode=require
+  # jdbc:postgresql://<aurora-writer>:5432/db_pay_request_to_pay_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # (deploy/terraform output jdbc_url); any other sslmode or sslrootcert fails the render.
+  DB_URL: ""
   KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam (port 9098)
   OIDC_ISSUER_URI: ""             # https://<identity-host>/realms/fintechbankx
   OIDC_JWK_SET_URI: ""            # <issuer>/protocol/openid-connect/certs
   OIDC_AUDIENCE: svc-pay-request-to-pay
+  # Runtime role (DML only, granted by V5); the schema owner is only in the migration Job.
   DB_USERNAME: payment_request_to_pay_app
   DB_POOL_MAX: "10"
   KAFKA_SECURITY_PROTOCOL: SASL_SSL
@@ -58,15 +68,60 @@ config:
 # Operator through the platform ClusterSecretStore aws-secrets-manager.
 externalSecret:
   enabled: true
-  # Secrets Manager secret from deploy/terraform output app_db_secret_name.
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name:
+  # <env>/payment-request-to-pay-service/db-app (any other key fails the render).
   remoteSecretName: ""
   refreshInterval: 1h
 
-networkPolicy:
+# Flyway as a separate step: a pre-install/pre-upgrade Job runs the image with
+# "migrate" as the schema owner. Its ExternalSecret and Secret exist only while
+# the hook runs; the service pods never see the owner credential.
+migration:
   enabled: true
-  # TPP traffic arrives through the Istio ingress gateway.
+  # REQUIRED Secrets Manager secret
+  # <env>/payment-request-to-pay-service/db-migration ({"username",
+  # "password"} of the schema owner; deploy/terraform output
+  # migration_db_secret_name).
+  remoteSecretName: ""
+  # A classic (non-native) Istio sidecar keeps the Job from completing, so
+  # the Job runs outside the mesh by default; it only talks to Aurora (TLS
+  # verify-full). Set true once the cluster runs Istio native sidecars.
+  istioSidecar: false
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 512Mi
+
+# Amazon RDS CA bundle. Same shape as the shared chart's databaseCa
+# (cicd-templates 4f0f266): the platform ConfigMap rds-ca-bundle (key
+# global-bundle.pem, trust-manager) mounted read-only at mountPath in the pods
+# and the migration Job, exported as DB_SSL_ROOT_CERT, not optional (a missing
+# bundle stops the pod), and a DB_URL without sslmode=verify-full against it
+# fails the render.
+databaseCa:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
+# NetworkPolicy belongs to the mesh repo (platform review round 2, cicd-templates
+# 1dd1138), so the chart renders none by default. Opt-in only for a cluster the
+# mesh repo does not cover yet; it admits namespaces only, never a CIDR.
+networkPolicy:
+  enabled: false
+  # 8080: TPP traffic arrives through the Istio ingress gateway only.
   apiCallerNamespaces:
     - istio-ingress
+  # Scrape: 15020 (Istio merged metrics) and 8081 from this namespace only.
+  observabilityNamespace: observability
+
+# Metrics: the observability repo's PodMonitor fintechbankx-services is the
+# single scrape path (pod label fintechbankx.io/service-id plus the
+# prometheus.io annotations). This chart ships no ServiceMonitor (cicd-templates
+# 0f86859).
 
 topologySpread:
   maxSkew: 1

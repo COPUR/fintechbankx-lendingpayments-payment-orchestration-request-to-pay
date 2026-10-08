@@ -1,3 +1,9 @@
+{{- /* Aurora: verify the server certificate against the mounted RDS CA bundle (cicd-templates 4f0f266). */ -}}
+{{- $rootcert := printf "sslrootcert=%s" (include "rtp.databaseCaPath" .) }}
+{{- $dbUrl := toString (default "" .Values.config.DB_URL) }}
+{{- if and $dbUrl (not (and (contains "sslmode=verify-full" $dbUrl) (contains $rootcert $dbUrl))) }}
+{{- fail (printf "config.DB_URL must use sslmode=verify-full&%s (mounted ConfigMap %s)" $rootcert .Values.databaseCa.configMapName) }}
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

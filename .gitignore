@@ -10,5 +10,7 @@ build/
 # Terraform working files
 **/.terraform/
 **/.terraform.lock.hcl
+# The deploy root pins its provider hashes (platform review round); module copies stay ignored.
+!deploy/terraform/.terraform.lock.hcl
 *.tfstate
 *.tfstate.*

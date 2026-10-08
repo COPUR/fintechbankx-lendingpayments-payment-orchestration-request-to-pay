@@ -83,10 +83,12 @@ migration:
   # "password"} of the schema owner; deploy/terraform output
   # migration_db_secret_name).
   remoteSecretName: ""
-  # A classic (non-native) Istio sidecar keeps the Job from completing, so
-  # the Job runs outside the mesh by default; it only talks to Aurora (TLS
-  # verify-full). Set true once the cluster runs Istio native sidecars.
-  istioSidecar: false
+  # Native sidecars are mesh-wide (mesh 4bf3906, istiod
+  # ENABLE_NATIVE_SIDECARS "true"): the proxy is a restartable init container
+  # and stops when the Flyway container exits, so the Job completes inside the
+  # mesh like the service pods. The mesh contract lists no exemption for it.
+  # false only on a cluster without native sidecars.
+  istioSidecar: true
   backoffLimit: 1
   activeDeadlineSeconds: 600
   resources:

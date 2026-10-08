@@ -32,9 +32,6 @@ spec:
         sidecar.istio.io/inject: "true"
       annotations:
         sidecar.istio.io/inject: "true"
-        # Keep the sidecar draining for longer than the app's graceful shutdown
-        # (preStop 10 s + spring.lifecycle 40 s), within terminationGracePeriodSeconds.
-        proxy.istio.io/config: '{"terminationDrainDuration": "55s"}'
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ .Values.service.managementPort | quote }}
@@ -45,8 +42,10 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      # Above the sidecar drain (55 s), which covers preStop 10 s +
-      # spring.lifecycle.timeout-per-shutdown-phase 40 s, so neither is killed mid-drain.
+      # Native sidecars are mesh-wide (mesh 4bf3906, istiod ENABLE_NATIVE_SIDECARS):
+      # the proxy stops after the application container, so no drain annotation
+      # is needed. The grace period bounds preStop 10 s +
+      # spring.lifecycle.timeout-per-shutdown-phase 40 s with headroom.
       terminationGracePeriodSeconds: 65
       securityContext:
         runAsNonRoot: true

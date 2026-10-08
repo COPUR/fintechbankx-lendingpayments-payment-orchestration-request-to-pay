@@ -109,7 +109,8 @@ jobs:
 
           # Platform review round 2: NetworkPolicy is the mesh repo's (off by default, never a CIDR,
           # no open probe port), the observability PodMonitor is the single scrape path (no
-          # ServiceMonitor), squad label, sidecar drain 55 s within a 65 s grace period, and Strimzi
+          # ServiceMonitor), squad label, 65 s grace period with no sidecar drain annotation (native
+          # sidecars are mesh-wide, mesh 4bf3906), the migration Job inside the mesh, and Strimzi
           # trusts the cluster CA.
           if grep -qE '^kind: (NetworkPolicy|ServiceMonitor)$' <<<"$rendered"; then
             echo "chart renders a NetworkPolicy or ServiceMonitor by default" >&2; exit 1
@@ -122,7 +123,9 @@ jobs:
           fi
           grep -q 'fintechbankx.io/service-id: svc-pay-request-to-pay' <<<"$deployment"
           grep -q 'prometheus.io/port: "8081"' <<<"$deployment"
-          grep -q 'terminationDrainDuration": "55s"' <<<"$deployment"
+          if grep -q 'terminationDrainDuration' <<<"$deployment"; then echo "drain annotation is redundant with native sidecars" >&2; exit 1; fi
+          job="$(helm template ci "$chart" "${args[@]}" --show-only templates/migration-job.yaml)"
+          grep -q 'sidecar.istio.io/inject: "true"' <<<"$job"
           grep -q 'terminationGracePeriodSeconds: 65' <<<"$deployment"
           test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
           strimzi="$(helm template ci "$chart" "${args[@]}" --set kafka.profile=kafka-strimzi --show-only templates/deployment.yaml)"

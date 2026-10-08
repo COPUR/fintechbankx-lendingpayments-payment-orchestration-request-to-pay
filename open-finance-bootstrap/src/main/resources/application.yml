@@ -11,6 +11,8 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 40s
   datasource:
+    # Deployed: sslmode=verify-full against the RDS CA bundle the chart mounts
+    # (deploy/terraform output jdbc_url).
     url: ${DB_URL:jdbc:postgresql://localhost:5432/db_pay_request_to_pay_local}
     username: ${DB_USERNAME:payment_request_to_pay_app}
     # The credential is bound from SPRING_DATASOURCE_PASSWORD (Kubernetes Secret
@@ -31,6 +33,16 @@ spring:
         jdbc:
           time_zone: UTC
   flyway:
+    # Migrations run as the schema owner (DB_MIGRATION_USERNAME / _PASSWORD,
+    # secret <env>/payment-request-to-pay-service/db-migration), deployed as the
+    # Helm pre-install/pre-upgrade Job "migrate"; the pods get only the runtime
+    # role (DB_USERNAME, secret db-app) and run with SPRING_FLYWAY_ENABLED=false.
+    # V5 grants the runtime role its DML. Without DB_MIGRATION_* (local runs)
+    # Flyway uses the app credentials.
+    user: ${DB_MIGRATION_USERNAME:${spring.datasource.username}}
+    password: ${DB_MIGRATION_PASSWORD:${spring.datasource.password:}}
+    placeholders:
+      runtime_role: ${spring.datasource.username}
     schemas: sc_pay_request_to_pay
     default-schema: sc_pay_request_to_pay
     create-schemas: true

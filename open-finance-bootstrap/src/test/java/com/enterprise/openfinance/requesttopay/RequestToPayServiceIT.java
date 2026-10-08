@@ -126,12 +126,42 @@ class RequestToPayServiceIT {
         when(jwtDecoder.decode(any())).thenAnswer(call -> boundToken(call.getArgument(0)));
     }
 
+    /** As the schema owner: the runtime role the service runs as may not delete pay requests. */
     @BeforeEach
     void cleanTables() {
-        jdbc.update("delete from " + SCHEMA + ".outbox_event");
-        jdbc.update("delete from " + SCHEMA + ".pay_request_idempotency");
-        jdbc.update("delete from " + SCHEMA + ".pay_request");
-        jdbc.update("delete from " + SCHEMA + ".dpop_proof_jti");
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        owner.update("delete from " + SCHEMA + ".outbox_event");
+        owner.update("delete from " + SCHEMA + ".pay_request_idempotency");
+        owner.update("delete from " + SCHEMA + ".pay_request");
+        owner.update("delete from " + SCHEMA + ".dpop_proof_jti");
+    }
+
+    /**
+     * Platform review item 4: the service connects as a runtime role with
+     * only the DML its code issues (V5); Flyway ran as the schema owner.
+     */
+    @Test
+    void theRuntimeRoleHasOnlyTheDmlTheServiceIssues() {
+        assertThat(jdbc.queryForObject("select current_user", String.class))
+                .isEqualTo(PostgresTestDatabase.RUNTIME_ROLE);
+        assertThat(PostgresTestDatabase.owner().queryForObject(
+                "select tableowner from pg_tables where schemaname = ? and tablename = 'pay_request'", String.class, SCHEMA))
+                .isEqualTo(PostgresTestDatabase.ownerUser());
+        for (String forbidden : List.of(
+                "create table " + SCHEMA + ".rogue (id int)",
+                "alter table " + SCHEMA + ".pay_request add column rogue int",
+                "drop table " + SCHEMA + ".dpop_proof_jti",
+                "truncate " + SCHEMA + ".outbox_event",
+                "delete from " + SCHEMA + ".pay_request",
+                "update " + SCHEMA + ".pay_request_idempotency set expires_at = now()",
+                "update " + SCHEMA + ".dpop_proof_jti set expires_at = now()",
+                "select count(*) from " + SCHEMA + ".flyway_schema_history")) {
+            // Postgres says "permission denied" for missing grants and "must be owner" for DDL.
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.execute(forbidden))
+                    .as(forbidden)
+                    .satisfies(e -> assertThat(org.springframework.core.NestedExceptionUtils.getMostSpecificCause(e).getMessage())
+                            .containsAnyOf("permission denied", "must be owner"));
+        }
     }
 
     @Test
@@ -260,7 +290,8 @@ class RequestToPayServiceIT {
     @Test
     void anExpiredKeyCanBeReusedForANewRequest() throws Exception {
         String first = create("idem-expired", "250.00", "ix-exp-1");
-        jdbc.update("update " + SCHEMA + ".pay_request_idempotency set expires_at = now() - interval '1 second' "
+        // As the owner: the service only inserts, reads and deletes idempotency keys.
+        PostgresTestDatabase.owner().update("update " + SCHEMA + ".pay_request_idempotency set expires_at = now() - interval '1 second' "
                 + "where tpp_id = 'TPP-001' and idempotency_key = 'idem-expired'");
 
         String response = mvc.perform(createRequest("idem-expired", "999.00", "ix-exp-2"))

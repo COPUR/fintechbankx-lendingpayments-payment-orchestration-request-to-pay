@@ -1,35 +1,75 @@
 # Regression mapping: monolith request-to-pay -> svc-pay-request-to-pay
 
-Status: **Proposed**. Source: `enterprise-loan-management-system` (branch master),
-`open-finance-context/open-finance-infrastructure/.../requesttopay/infrastructure/rest/PayRequestController.java`
-(`@RequestMapping("/open-finance/v1")`). Target: this repository,
-`open-finance-infrastructure/.../requesttopay/infrastructure/rest/PayRequestController.java`
-(`@RequestMapping("/open-finance/v1")`). The extraction seed on `main` had moved the endpoints to
-`/api/v1/pay-requests`; this branch restores the monolith's TPP paths (platform contract: TPP-facing endpoints live
-under `/open-finance/v1` and require DPoP; `/api/v1` is for internal callers, and request-to-pay has none).
+- Status: **Proposed**
+- Matrix row: **LP-10** (`docs/alignment/monolith-to-repo-alignment.csv` in the enterprise-architecture repository;
+  status `partial`, `parity` empty: no parity run has been recorded)
+- Rules: ADR-029 section 2 (scenarios keyed by matrix row, same input to both systems, accepted differences listed
+  with the decision that allows them, any other difference fails the run)
+- Monolith: `enterprise-loan-management-system`, branch `master` (pin the commit in each parity run),
+  `open-finance-context/open-finance-infrastructure/.../requesttopay/infrastructure/rest/PayRequestController.java`
+  (`@RequestMapping("/open-finance/v1")`)
+- Service: this repository,
+  `open-finance-infrastructure/.../requesttopay/infrastructure/rest/PayRequestController.java`
+  (`@RequestMapping("/open-finance/v1")`)
 
-## Endpoints
+The extraction seed on `main` had moved the endpoints to `/api/v1/pay-requests`; this branch restores the
+monolith's TPP paths (platform contract: TPP-facing endpoints live under `/open-finance/v1` and require DPoP;
+`/api/v1` is for internal callers, and request-to-pay has none). No path mapping is needed between the systems.
 
-| Monolith | New service | Request / response | Status codes |
-|---|---|---|---|
-| `POST /open-finance/v1/par` | `POST /open-finance/v1/par` (same path) | Same body (`Data.PsuId`, `Data.CreditorName`, `Data.InstructedAmount.{Amount,Currency}`) and response (`Data.ConsentId`, `Data.Status`, `Links.Self`); `Location`/`Links.Self` `/open-finance/v1/payment-consents/{id}` as in the monolith. New response header `X-Idempotent-Replay`. | 201 unchanged; new 409 `IDEMPOTENCY_KEY_REUSED` (same key, other payload); 400 on missing `X-Idempotency-Key`, invalid amount format or currency |
-| `GET /open-finance/v1/payment-consents/{consentId}` | same path | Same body (`Data.ConsentId`, `Data.Status`, `Data.PaymentId`), `ETag` / `If-None-Match` -> 304 unchanged | 200/304/404 unchanged; other TPP 400 -> **403** |
-| `POST /open-finance/v1/payment-consents/{consentId}/accept` | same path | Same body `{"paymentId"}` and response | 201 unchanged; finalized 400 `REQUEST_FINALIZED` unchanged; other TPP 400 -> **403**; concurrent change 409 `CONCURRENT_UPDATE` |
-| `POST /open-finance/v1/payment-consents/{consentId}/reject` | same path | Same body and response | 200 unchanged; finalized 400; other TPP 400 -> **403** |
-| `api/openapi/request-to-pay-service.yaml` on `main`: `/par/{requestId}[/accept|/reject]`, `DebtorIdentifier`, `RequestId` | spec rewritten to the served paths and fields (version 1.0.0) | the `main` spec was never served by the monolith or this repository | 6 oasdiff breaking errors against `main`, listed in `api/openapi/request-to-pay-service.accepted-breaking.txt`; Proposed ADR `docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md` awaits the owner |
+## Parity gate (blocks cut-over)
 
-## Intentional behaviour changes
+| Item | Value |
+|---|---|
+| Scenarios | LP-10-S01 to LP-10-S04 below, against the monolith at a pinned `master` commit and against this service's release candidate, same seed data and same TPP |
+| Normalisation | ignore generated ids (`Data.ConsentId`, including the prefix, see LP-10-D11), timestamps, `ETag` values and trace headers; compare `InstructedAmount` exactly (amount, scale, currency) |
+| Pass condition | 0 regressions on LP-10; every difference observed is one of LP-10-D01 to LP-10-D13 |
+| Run id | `<run>-<sha7>` of the tested revision, recorded in the LP-10 `parity` column and in the runbook's evidence links |
+| Owner | harness and catalog: "Regression tests against the monolith" workstream (ADR-029 2.6); scenarios and fixes: payments squad |
+| Current state | **not run.** No harness run exists for LP-10; cut-over (runbook step 5) does not start until it passes |
 
-| # | Change | Why | Test |
-|---|---|---|---|
-| 1 | Token required and validated (issuer, signature, `aud` contains `svc-pay-request-to-pay`); monolith only checked that `Authorization` and `DPoP` headers were non-blank | platform contract (Keycloak audience) | `AudienceValidatorTest`, `PayRequestControllerDPoPIntegrationTest` |
-| 2 | TPP identity from the token (`azp`, else `client_id`); `x-fapi-financial-id` may only repeat it (else 403); monolith trusted the header and fell back to `UNKNOWN_TPP` | anyone could read or decide another TPP's request | `TppIdentityTest`, `RequestToPayServiceIT.anotherTppCannotReadOrDecideTheRequest` |
-| 3 | Ownership mismatch 400 -> 403 | correct semantics; consistent with the other extracted services | `PayRequestExceptionHandlerTest` |
-| 4 | DPoP required on every TPP path: `Authorization: DPoP`, a proof (signature, htm, htu, iat, jti unique across replicas), `cnf.jkt` equal to the proof key; Bearer, missing proof, unbound token or replayed proof -> 401 with `WWW-Authenticate: DPoP`. Monolith only checked the headers were non-blank | platform contract "DPoP applies by caller, not by namespace" | `PayRequestControllerDPoPIntegrationTest`, `DPoPRequestVerifierTest`, `RequestToPayServiceIT.bearerSchemeOnTheTppPathIsUnauthorizedAndStoresNothing`, `.aReplayedProofIsUnauthorized` |
-| 5 | `X-Idempotency-Key` required on create (as on this repository's `main`); a retry with the same key and payload returns the first pay request instead of 409, different payload 409 | contracts skill: mutating endpoints replay the first result | `PayRequestServiceTest`, `RequestToPayServiceIT` (including an 8-thread race) |
-| 6 | `X-FAPI-Interaction-ID` must match `^[A-Za-z0-9._:-]{1,128}$` | it becomes the event correlationId and a log field | `RequestToPayServiceIT.interactionIdMustBeASafeToken` |
-| 7 | Amount: ISO 4217 currency and no more decimals than its minor unit (AED 500.105 -> 400); stored and published at the minor unit (`500` -> `"500.00"`) | Money value object; DB `NUMERIC(19,4)` | `MoneyTest`, `PayRequestLifecycleTest` |
-| 8 | Data survives restarts and is shared by replicas (PostgreSQL); monolith kept pay requests in memory | own database | `RequestToPayServiceIT` |
-| 9 | Events `evt.pay.rtp.{created,accepted,rejected}.v1` with the standard envelope through an outbox; the monolith published nothing (no-op adapter) and the seed's `rtp.pay_requests.v1` publisher never ran | catalog contract | `PayRequestEventEnvelopeFactoryTest`, `OutboxRelayTest` |
-| 10 | Status reads cached per replica for 10 s (monolith: 60 s in one process); the deciding replica refreshes immediately | multi-replica | `PayRequestServiceTest` |
-| 11 | Unknown paths 401/403 instead of 404 (deny by default); no internal `/api/v1` surface (no caller exists) | security | `PayRequestControllerDPoPIntegrationTest.oldInternalPrefixAndUnknownPathsAreDenied` |
+Each scenario runs the monolith's request shape where it is still valid for the service. Where an accepted
+difference changes the request (token with `payments` scope and DPoP `ath`, `X-Idempotency-Key`, opaque `PsuId`),
+the service side sends the adjusted request and the comparison covers the response and state only.
+
+## Scenarios
+
+| Scenario | Monolith | Service | Request / response compared | Status codes compared |
+|---|---|---|---|---|
+| LP-10-S01 create | `POST /open-finance/v1/par` | same path | body `Data.PsuId`, `Data.CreditorName`, `Data.InstructedAmount.{Amount,Currency}`; response `Data.ConsentId`, `Data.Status`, `Links.Self`; `Location` / `Links.Self` = `/open-finance/v1/payment-consents/{id}` | 201; 400 on invalid amount or currency |
+| LP-10-S02 read status | `GET /open-finance/v1/payment-consents/{consentId}` | same path | `Data.ConsentId`, `Data.Status`, `Data.PaymentId`; `If-None-Match` -> 304 | 200, 304, 404 |
+| LP-10-S03 accept | `POST /open-finance/v1/payment-consents/{consentId}/accept` | same path | body `{"paymentId"}`; response; state read back through S02 | 201; 400 `REQUEST_FINALIZED` after a reject or with another paymentId; 404 |
+| LP-10-S04 reject | `POST /open-finance/v1/payment-consents/{consentId}/reject` | same path | response; state read back through S02 | 200; 400 `REQUEST_FINALIZED` after an accept; 404 |
+
+`IllegalStateException` (an internal invariant failure) is 500 `INTERNAL_ERROR` "Unexpected error occurred" in both
+systems (monolith: generic handler; service: `PayRequestErrorResponsesOverHttpTest.anIllegalStateIsAnInternalErrorWithAFixedMessage`).
+This is parity, not a difference.
+
+## Accepted differences
+
+"Decision" names what allows the difference and its status. Nothing here is accepted until the payments owner
+approves it; ADR-030 is the governance number of `docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md`
+(Proposed).
+
+| Id | Scenarios | Difference (monolith -> service) | Decision (status) | Test |
+|---|---|---|---|---|
+| LP-10-D01 | all | Token required and validated (issuer, signature, `aud` contains `svc-pay-request-to-pay`); the monolith only checked that `Authorization` and `DPoP` were non-blank | ADR-020 service tokens and the platform DPoP contract (Proposed) | `AudienceValidatorTest`, `PayRequestControllerDPoPIntegrationTest.requestWithoutTokenGetsADpopChallenge` |
+| LP-10-D02 | all | The token must also carry scope `payments` and come from a TPP client: service clients (`svc-*`) and the first-party channels (`fintechbankx-web`, `fintechbankx-mobile`) are refused; if the token has `fbx_client_type`, it must be `open-finance-tpp`. Otherwise 403 | ADR-030 open question 2 (Proposed; the realm has no `payments` scope yet) | `PayRequestControllerDPoPIntegrationTest.tokenWithTheAudienceButWithoutThePaymentsScopeIsForbidden`, `.serviceClientTokenIsForbiddenEvenWithTheScope`, `.firstPartyChannelTokenIsForbidden`, `.clientTypeClaimOtherThanOpenFinanceTppIsForbidden` |
+| LP-10-D03 | all | TPP identity from the token (`azp`, else `client_id`); `x-fapi-financial-id` may only repeat it (else 403); no token client -> 403. The monolith trusted the header and fell back to `UNKNOWN_TPP` | platform security contract (Proposed) | `TppIdentityTest`, `RequestToPayServiceIT.anotherTppCannotReadOrDecideTheRequest` |
+| LP-10-D04 | S02, S03, S04 | Another TPP's request: 400 -> **403** | ADR-030 (Proposed) | `PayRequestExceptionHandlerTest`, `PayRequestControllerDPoPIntegrationTest.readingAnotherTppsPayRequestIsForbidden` |
+| LP-10-D05 | all | DPoP (RFC 9449) on every TPP path: `Authorization: DPoP`; a proof with valid signature, `htm`, `htu` (public URL), `iat` at most 300 s old and 60 s ahead, `ath` equal to the access token's hash, a `jti` used once across replicas (consumed only after the other checks pass); `cnf.jkt` equal to the proof key. Otherwise 401 with `WWW-Authenticate: DPoP` | platform DPoP contract (Proposed) | `DPoPProofBindingTest`, `PayRequestControllerDPoPIntegrationTest.proofBoundToAnotherAccessTokenIsUnauthorized`, `RequestToPayServiceIT.bearerSchemeOnTheTppPathIsUnauthorizedAndStoresNothing`, `.aReplayedProofIsUnauthorized` |
+| LP-10-D06 | S01 | `X-Idempotency-Key` required; same key and payload replays the first pay request (`X-Idempotent-Replay: true`), other payload 409 `IDEMPOTENCY_KEY_REUSED`; an expired key (24 h) can be reused | contracts skill: mutating endpoints replay the first result (Proposed) | `PayRequestServiceTest`, `RequestToPayServiceIT.retryWithSameKeyReturnsTheFirstRequestAndDifferentPayloadIsAConflict`, `.concurrentCreatesWithTheSameKeyProduceOnePayRequest`, `.anExpiredKeyCanBeReusedForANewRequest` |
+| LP-10-D07 | S01 | `Data.PsuId` must match `^[A-Za-z0-9-]{1,64}$` (an opaque PSU reference, not a name, e-mail or IBAN); the monolith took any non-blank text. Otherwise 400 `INVALID_REQUEST` | ADR-030 (Proposed); data classification of `debtorId` | `CreatePayRequestCommandTest.psuIdIsAnOpaqueReferenceOfLettersDigitsAndHyphens`, `PayRequestControllerDPoPIntegrationTest.psuIdThatIsNotAnOpaqueReferenceIsAnInvalidRequest` |
+| LP-10-D08 | S01 | `X-FAPI-Interaction-ID` must match `^[A-Za-z0-9._:-]{1,128}$` | it becomes the event correlationId and a log field (Proposed) | `RequestToPayServiceIT.interactionIdMustBeASafeToken` |
+| LP-10-D09 | S01 | Amount: ISO 4217 currency and no more decimals than its minor unit (AED 500.105 -> 400); stored and returned at the minor unit (`500` -> `"500.00"`) | Money value object, ADR-021 data rules (Proposed) | `MoneyTest`, `PayRequestLifecycleTest` |
+| LP-10-D10 | S03, S04 | Repeating the decision already made (accept with the same paymentId, or reject again) returns the current state (201 / 200) and publishes nothing; the monolith answered 400 `REQUEST_FINALIZED`. The opposite decision, or another paymentId, is still 400 `REQUEST_FINALIZED`. Optional `reason` (at most 256 characters) on accept and reject | ADR-030 (Proposed): retries after a lost response must be safe | `PayRequestDecisionTest`, `RequestToPayServiceIT.aRepeatedDecisionReturnsTheCurrentStateAndPublishesNothingNew` |
+| LP-10-D11 | S01 | Generated ids start with `CONS-RTP2-` (monolith `CONS-RTP-`); still opaque. Lets the gateway route follow-up calls to the backend that created the request in every cut-over phase | runbook routing (Proposed) | `RequestToPayConfigurationTest.idsAreDistinctFromTheMonolithsSoTheGatewayCanRouteByPrefix` |
+| LP-10-D12 | all | Events `evt.pay.rtp.{created,accepted,rejected}.v1` with the standard envelope through a transactional outbox; decision events name the deciding client (`actorClientId`) and the optional `reason`. The monolith published nothing (no-op adapter); the seed's `rtp.pay_requests.v1` publisher never ran. Published only once the relay is enabled (runbook) | ADR-019, ADR-024, ADR-021 decision 4 (Proposed); AsyncAPI `api/asyncapi/svc-pay-request-to-pay.yaml` | `PayRequestEventEnvelopeFactoryTest`, `OutboxRelayTest`, `RequestToPayServiceIT.lifecycleOverHttpPersistsStateAndWritesEveryEventToTheOutbox` |
+| LP-10-D13 | all | State persists and is shared by replicas (PostgreSQL; the monolith kept pay requests in memory); status reads cached per replica for 10 s (monolith 60 s in one process), the deciding replica refreshes at once; unknown paths and the old `/api/v1` prefix 401/403 instead of 404 (deny by default) | ADR-021 own database; deny-by-default security (Proposed) | `RequestToPayServiceIT`, `PayRequestServiceTest`, `PayRequestControllerDPoPIntegrationTest.oldInternalPrefixAndUnknownPathsAreDenied` |
+
+## OpenAPI on `main`
+
+`api/openapi/request-to-pay-service.yaml` on `main` (`/par/{requestId}[/accept|/reject]`, `DebtorIdentifier`,
+`RequestId`) was never served by the monolith or by this repository. This branch rewrites it to the served paths and
+fields (version 1.0.0): 6 oasdiff breaking errors against `main`, each waived in
+`api/openapi/request-to-pay-service.accepted-breaking.txt` and listed in ADR-030 (Proposed). This is a contract
+change, not a behaviour difference against the monolith, so it has no LP-10-D id.

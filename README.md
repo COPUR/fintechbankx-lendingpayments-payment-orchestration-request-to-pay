@@ -56,6 +56,7 @@ Status: **Proposed** until the Recurring and Bulk Payments Squad merges and rele
 | Kubernetes | `deploy/helm/payment-request-to-pay-service` (namespace `payments`) |
 | AWS infrastructure | `deploy/terraform` |
 | Extraction runbook | [RUNBOOK-EXTRACT-pay-request-to-pay](docs/migration/RUNBOOK-EXTRACT-pay-request-to-pay.md) |
+| Regression mapping (monolith endpoints -> this service) | [REGRESSION_MAPPING](docs/migration/REGRESSION_MAPPING.md) |
 | Deployment and Well-Architected mapping | [DEPLOYMENT_AND_WELL_ARCHITECTED](docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md) |
 | Event contract | [api/asyncapi/svc-pay-request-to-pay.yaml](api/asyncapi/svc-pay-request-to-pay.yaml) |
 | HTTP contract | [api/openapi/request-to-pay-service.yaml](api/openapi/request-to-pay-service.yaml) |

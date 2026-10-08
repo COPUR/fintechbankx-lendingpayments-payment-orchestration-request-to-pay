@@ -1,6 +1,6 @@
 # Accepted (Proposed, pending the API owner's review) 2026-10-08 with the move to a standalone service: the spec on main described paths and fields that no deployed service ever served (see docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md).
 # The spec now matches the served TPP API: the monolith's /open-finance/v1/par and /open-finance/v1/payment-consents/{consentId}[/accept|/reject], body Data.PsuId / Data.InstructedAmount, interaction-id pattern enforced by the controller.
-# Delete this file in the first PR after this one merges (scripts/ci/oasdiff-breaking.sh enforces it).
+# Once merged this waiver is stale and never applied again; scripts/ci/oasdiff-breaking.sh makes the next PR that touches the spec delete it.
 POST /par added the new required request property 'Data/InstructedAmount'
 POST /par added the new required request property 'Data/PsuId'
 POST /par added the pattern '^[A-Za-z0-9._:-]{1,128}$' to the 'header' request parameter 'x-fapi-interaction-id'

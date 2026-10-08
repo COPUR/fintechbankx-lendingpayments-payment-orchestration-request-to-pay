@@ -94,8 +94,10 @@ Changes oasdiff does not report, also covered by this decision:
   `evt.pay.rtp.expired.v1` event); adding it later is a minor change.
 - A client that followed the `main` spec could never have worked against any deployment, so no working
   integration breaks.
-- The waiver file must be deleted in the first PR after this one merges. `scripts/ci/oasdiff-breaking.sh`
-  enforces this.
+- The waiver applies to this change only. `scripts/ci/oasdiff-breaking.sh` (ported from the OpenAPI catalog's
+  fixed check) treats it as stale once it is on `main`: it is never applied again, the push run on `main` passes
+  (the spec equals the base), and the next pull request that touches the spec or the waiver must delete it. Any
+  other pull request gets a notice only.
 
 ## Alternatives considered
 

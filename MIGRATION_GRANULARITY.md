@@ -17,4 +17,4 @@
 - This is an extraction seed for bounded-context split migration.
 - Follow-up refactoring may be needed to remove residual cross-context coupling.
 - Build artifacts and local machine files are excluded by policy.
-
+- 2026-10-08: seed turned into a runnable service (`open-finance-bootstrap`). The service owns `sc_pay_request_to_pay` with its own Flyway migrations and publishes `evt.pay.rtp.*.v1` through a transactional outbox. The monolith only had in-memory adapters for request-to-pay, so there is no data to backfill (see `docs/migration/RUNBOOK-EXTRACT-pay-request-to-pay.md`). Non-request-to-pay residue was removed (README, "Removed from the extraction seed").

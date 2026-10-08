@@ -28,12 +28,14 @@ class FlywayRoleConfigurationTest {
         FlywayProperties flyway = flyway(Map.of(
             "DB_USERNAME", "payment_request_to_pay_app",
             "SPRING_DATASOURCE_PASSWORD", "runtime-secret",
-            "DB_MIGRATION_USERNAME", "payment_request_to_pay_owner",
+            "DB_MIGRATION_USERNAME", "payment_request_to_pay_migration",
             "DB_MIGRATION_PASSWORD", "owner-secret"));
 
-        assertThat(flyway.getUser()).isEqualTo("payment_request_to_pay_owner");
+        assertThat(flyway.getUser()).isEqualTo("payment_request_to_pay_migration");
         assertThat(flyway.getPassword()).isEqualTo("owner-secret");
         assertThat(flyway.getPlaceholders()).containsEntry("runtime_role", "payment_request_to_pay_app");
+        // The DBA bootstrap (role_bootstrap_sql) creates the schema owned by the migration role.
+        assertThat(flyway.isCreateSchemas()).isFalse();
     }
 
     @Test

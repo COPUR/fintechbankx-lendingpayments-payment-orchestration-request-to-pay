@@ -159,10 +159,12 @@ resource "aws_rds_cluster_instance" "database" {
 }
 
 # Two database roles (platform review round, item 4). The runtime role
-# payment_request_to_pay_app has DML only on sc_pay_request_to_pay; the schema
-# owner payment_request_to_pay_owner runs Flyway from the pre-install/pre-upgrade
-# migration Job and is never mounted in the service pods. The DBA bootstrap in
-# the runbook creates both roles and writes {"username", "password"} into these
+# payment_request_to_pay_app has DML and sequence usage only on
+# sc_pay_request_to_pay; the migration role payment_request_to_pay_migration
+# owns the schema, runs Flyway from the pre-install/pre-upgrade migration Job
+# and is never mounted in the service pods. The DBA bootstrap in the runbook
+# runs the SQL of terraform-modules aurora-postgresql role_bootstrap_sql
+# (1e6ca85) for these names and writes {"username", "password"} into these
 # secrets; Terraform never sees the values. Names follow terraform-modules
 # aurora-postgresql (019a842): <env>/<service account>/db-app and db-migration,
 # because the External Secrets role may read only <env>/*. Neither secret is

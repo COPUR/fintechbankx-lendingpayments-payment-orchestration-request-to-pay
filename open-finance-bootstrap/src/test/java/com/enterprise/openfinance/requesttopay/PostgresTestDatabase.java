@@ -15,13 +15,15 @@ import org.springframework.test.context.DynamicPropertyRegistry;
  * Runs the service with the two roles of production: Flyway as the schema
  * owner (the database's test user, through DB_MIGRATION_USERNAME / _PASSWORD,
  * in-process here, the Helm hook Job when deployed) and the application as a
- * separate runtime role (DB_USERNAME) with only the grants of V5. The owner
- * needs CREATEROLE to create that role.
+ * separate runtime role (DB_USERNAME) with only the grants of V5 and V6. The
+ * owner needs CREATEROLE to create that role. The owner also creates the
+ * schema, as the DBA bootstrap does in production (Flyway does not).
  */
 final class PostgresTestDatabase {
 
     static final String RUNTIME_ROLE = "payment_request_to_pay_runtime_it";
     static final String RUNTIME_PASSWORD = "payment_request_to_pay_runtime_it";
+    static final String SCHEMA = "sc_pay_request_to_pay";
 
     private static boolean runtimeRoleReady;
 
@@ -93,6 +95,7 @@ final class PostgresTestDatabase {
                     end if;
                 end $$
                 """.formatted(RUNTIME_ROLE, RUNTIME_PASSWORD));
+        owner().execute("create schema if not exists " + SCHEMA);
         runtimeRoleReady = true;
     }
 

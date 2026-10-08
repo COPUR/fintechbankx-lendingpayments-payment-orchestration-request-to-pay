@@ -37,15 +37,17 @@ spring:
     # secret <env>/payment-request-to-pay-service/db-migration), deployed as the
     # Helm pre-install/pre-upgrade Job "migrate"; the pods get only the runtime
     # role (DB_USERNAME, secret db-app) and run with SPRING_FLYWAY_ENABLED=false.
-    # V5 grants the runtime role its DML. Without DB_MIGRATION_* (local runs)
-    # Flyway uses the app credentials.
+    # V5 grants the runtime role its DML, V6 USAGE, SELECT on sequences. The
+    # schema comes from the DBA bootstrap (terraform-modules aurora-postgresql
+    # role_bootstrap_sql: owned by the migration role), so Flyway never creates
+    # it. Without DB_MIGRATION_* (local runs) Flyway uses the app credentials.
     user: ${DB_MIGRATION_USERNAME:${spring.datasource.username}}
     password: ${DB_MIGRATION_PASSWORD:${spring.datasource.password:}}
     placeholders:
       runtime_role: ${spring.datasource.username}
     schemas: sc_pay_request_to_pay
     default-schema: sc_pay_request_to_pay
-    create-schemas: true
+    create-schemas: false
     locations: classpath:db/migration
   kafka:
     # Runtime-neutral; authentication comes from profile kafka-msk or kafka-strimzi.

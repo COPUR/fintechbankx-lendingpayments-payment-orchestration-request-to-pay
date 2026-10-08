@@ -1,0 +1,300 @@
+# AsyncAPI contract for svc-pay-request-to-pay.
+# Status: Proposed. Provider copy (this repository owns it); the asyncapi catalog mirrors it.
+# Naming: docs/NAMING_CONVENTION_DDD_EDA_BUSINESS_CONTEXT.md
+# Validate: npx -y @asyncapi/cli@2.13.0 validate asyncapi/svc-pay-request-to-pay.yaml
+asyncapi: 3.0.0
+id: urn:fintechbankx:asyncapi:svc-pay-request-to-pay
+info:
+  title: svc-pay-request-to-pay events
+  version: 1.0.0
+  description: |-
+    Event contract for svc-pay-request-to-pay (repository fintechbankx-lendingpayments-payment-orchestration-request-to-pay, canonical name fintechbankx-payments-request-to-pay-service).
+
+    Status: Proposed. Owner: Recurring and Bulk Payments Squad, Lending and Money Movement Tribe. Event namespace: `evt.pay.rtp`.
+
+    Implementation status: written by the transactional outbox (OutboxPayRequestEventPublisher, table sc_pay_request_to_pay.outbox_event) in the pay request's transaction and relayed by OutboxRelay (one active relay per cluster, per-aggregate order, max attempts then parked). The legacy topic rtp.pay_requests.v1 is no longer published: its publisher could not start (no runnable application, two competing notification beans), so no consumer ever received it and no dual-publish window is needed. Envelope shape is pinned by PayRequestEventEnvelopeFactoryTest.
+
+    Every message uses the standard envelope (common/event-envelope.yaml). Record key is the aggregateId. Topics use cleanup.policy=delete. Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
+
+    Mapping notes: Source record fields eventId, aggregateId and occurredOn move to the envelope (eventId, aggregateId, occurredAt). The record field version is a schema version (always 1) and is carried by the eventType suffix, not by aggregateVersion.
+  tags:
+  - name: payments
+  - name: evt.pay.rtp
+  x-service-id: svc-pay-request-to-pay
+  x-event-namespace: evt.pay.rtp
+  x-owning-squad: Recurring and Bulk Payments Squad
+defaultContentType: application/json
+servers:
+  kafka:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: FinTechBankX event platform cluster (svc-evt-streaming). mTLS required.
+    variables:
+      bootstrapServers:
+        description: Bootstrap servers, injected per environment by the platform.
+    security:
+    - $ref: '#/components/securitySchemes/mtls'
+channels:
+  created:
+    address: evt.pay.rtp.created.v1
+    title: evt.pay.rtp.created.v1
+    description: Payments.PayRequest.Created.v1. A request to pay was created for the debtor.
+    messages:
+      PayRequestCreated:
+        $ref: '#/components/messages/PayRequestCreated'
+    bindings:
+      kafka:
+        topic: evt.pay.rtp.created.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  accepted:
+    address: evt.pay.rtp.accepted.v1
+    title: evt.pay.rtp.accepted.v1
+    description: Payments.PayRequest.Accepted.v1. The debtor accepted the request and a payment was created (request
+      status CONSUMED).
+    messages:
+      PayRequestAccepted:
+        $ref: '#/components/messages/PayRequestAccepted'
+    bindings:
+      kafka:
+        topic: evt.pay.rtp.accepted.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  rejected:
+    address: evt.pay.rtp.rejected.v1
+    title: evt.pay.rtp.rejected.v1
+    description: Payments.PayRequest.Rejected.v1. The debtor rejected the request.
+    messages:
+      PayRequestRejected:
+        $ref: '#/components/messages/PayRequestRejected'
+    bindings:
+      kafka:
+        topic: evt.pay.rtp.rejected.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  deadLetter:
+    address: evt.pay.rtp.dlq.v1
+    title: evt.pay.rtp.dlq.v1
+    description: Dead-letter topic for the evt.pay.rtp namespace. Written by consumers (not by svc-pay-request-to-pay)
+      after bounded retries; replayed by the owning consumer squad.
+    messages:
+      DeadLetter:
+        $ref: '#/components/messages/DeadLetter'
+    bindings:
+      kafka:
+        topic: evt.pay.rtp.dlq.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 1209600000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+operations:
+  publishPayRequestCreated:
+    action: send
+    title: Publish Payments.PayRequest.Created.v1
+    summary: svc-pay-request-to-pay publishes Payments.PayRequest.Created.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/created'
+    messages:
+    - $ref: '#/channels/created/messages/PayRequestCreated'
+  publishPayRequestAccepted:
+    action: send
+    title: Publish Payments.PayRequest.Accepted.v1
+    summary: svc-pay-request-to-pay publishes Payments.PayRequest.Accepted.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/accepted'
+    messages:
+    - $ref: '#/channels/accepted/messages/PayRequestAccepted'
+  publishPayRequestRejected:
+    action: send
+    title: Publish Payments.PayRequest.Rejected.v1
+    summary: svc-pay-request-to-pay publishes Payments.PayRequest.Rejected.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/rejected'
+    messages:
+    - $ref: '#/channels/rejected/messages/PayRequestRejected'
+components:
+  schemas:
+    EventEnvelope:
+      $ref: ./common/event-envelope.yaml#/EventEnvelope
+    EventHeaders:
+      $ref: ./common/event-envelope.yaml#/EventHeaders
+    DeadLetterHeaders:
+      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
+    MonetaryAmount:
+      $ref: ./common/event-envelope.yaml#/MonetaryAmount
+    DecimalAmount:
+      $ref: ./common/event-envelope.yaml#/DecimalAmount
+    PayRequestCreatedData:
+      type: object
+      description: Payload of Payments.PayRequest.Created.v1.
+      properties:
+        creditorName:
+          type: string
+          description: Creditor display name as entered in the request.
+        amount:
+          allOf:
+          - $ref: '#/components/schemas/DecimalAmount'
+          description: Requested amount.
+        currency:
+          type: string
+          description: ISO 4217 currency code.
+          pattern: ^[A-Z]{3}$
+        debtorId:
+          type: string
+          description: Pseudonymous PSU id of the debtor.
+          minLength: 1
+      required:
+      - creditorName
+      - amount
+      - currency
+      - debtorId
+    PayRequestAcceptedData:
+      type: object
+      description: Payload of Payments.PayRequest.Accepted.v1.
+      properties:
+        paymentId:
+          type:
+          - string
+          - 'null'
+          description: Id of the resulting payment, if any.
+        amount:
+          allOf:
+          - $ref: '#/components/schemas/DecimalAmount'
+          description: Accepted amount.
+        currency:
+          type: string
+          description: ISO 4217 currency code.
+          pattern: ^[A-Z]{3}$
+        creditorName:
+          type: string
+          description: Creditor display name.
+        debtorId:
+          type: string
+          description: Pseudonymous PSU id of the debtor.
+          minLength: 1
+      required:
+      - amount
+      - currency
+      - creditorName
+      - debtorId
+    PayRequestRejectedData:
+      type: object
+      description: Payload of Payments.PayRequest.Rejected.v1.
+      properties: {}
+  messages:
+    PayRequestCreated:
+      name: PayRequestCreated
+      title: Payments.PayRequest.Created.v1
+      summary: A request to pay was created for the debtor.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.PayRequest.Created.v1
+            producer:
+              const: svc-pay-request-to-pay
+            data:
+              $ref: '#/components/schemas/PayRequestCreatedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (consentId of the pay request).
+          bindingVersion: 0.5.0
+      x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestCreatedEvent
+    PayRequestAccepted:
+      name: PayRequestAccepted
+      title: Payments.PayRequest.Accepted.v1
+      summary: The debtor accepted the request and a payment was created (request status CONSUMED).
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.PayRequest.Accepted.v1
+            producer:
+              const: svc-pay-request-to-pay
+            data:
+              $ref: '#/components/schemas/PayRequestAcceptedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (consentId of the pay request).
+          bindingVersion: 0.5.0
+      x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestAcceptedEvent
+    PayRequestRejected:
+      name: PayRequestRejected
+      title: Payments.PayRequest.Rejected.v1
+      summary: The debtor rejected the request.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.PayRequest.Rejected.v1
+            producer:
+              const: svc-pay-request-to-pay
+            data:
+              $ref: '#/components/schemas/PayRequestRejectedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (consentId of the pay request).
+          bindingVersion: 0.5.0
+      x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestRejectedEvent
+    DeadLetter:
+      name: DeadLetter
+      title: Dead letter for evt.pay.rtp
+      summary: A message from this namespace that a consumer could not process after bounded retries.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/DeadLetterHeaders'
+      payload:
+        $ref: '#/components/schemas/EventEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: Original record key (aggregateId).
+          bindingVersion: 0.5.0
+  securitySchemes:
+    mtls:
+      type: X509
+      description: Mutual TLS with platform-issued client certificates.

@@ -102,6 +102,9 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: >-
+        Access token from the fintechbankx realm; aud must contain
+        svc-pay-request-to-pay. The DPoP scheme (Authorization: DPoP) is also accepted.
   parameters:
     InteractionId:
       name: x-fapi-interaction-id
@@ -124,7 +127,10 @@ components:
     Dpop:
       name: DPoP
       in: header
-      required: true
+      required: false
+      description: >-
+        Optional DPoP proof (RFC 9449). Required when the access token is
+        DPoP-bound (cnf.jkt); then it must match the token and the request.
       schema:
         type: string
   schemas:

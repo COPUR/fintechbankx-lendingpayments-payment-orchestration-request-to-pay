@@ -43,6 +43,7 @@ public class DPoPTestUtils {
         return Jwt.withTokenValue("token")
                 .header("alg", "ES256")
                 .claim("sub", "user")
+                .claim("azp", "TPP-001")
                 .claim("scope", "payments")
                 .claim("cnf", cnf)
                 .build();

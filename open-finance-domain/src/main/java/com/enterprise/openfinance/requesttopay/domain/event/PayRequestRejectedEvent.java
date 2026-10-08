@@ -8,7 +8,7 @@ public record PayRequestRejectedEvent(
         String aggregateId,
         Instant occurredOn,
         int version
-) {
+) implements PayRequestDomainEvent {
     public PayRequestRejectedEvent(
             String aggregateId,
             Instant occurredOn

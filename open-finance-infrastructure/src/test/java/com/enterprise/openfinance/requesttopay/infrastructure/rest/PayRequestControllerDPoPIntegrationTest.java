@@ -1,10 +1,10 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestStatus;
 import com.enterprise.openfinance.requesttopay.domain.port.in.PayRequestUseCase;
-import com.enterprise.openfinance.requesttopay.infrastructure.cache.IdempotencyKeyRepository;
 import com.enterprise.openfinance.requesttopay.infrastructure.config.SecurityConfig;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPNonceRepository;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPSecurityAspect;
@@ -66,9 +66,6 @@ class PayRequestControllerDPoPIntegrationTest {
 
     @MockBean
     private DPoPNonceRepository dpopNonceRepository;
-
-    @MockBean
-    private IdempotencyKeyRepository idempotencyKeyRepository;
 
     private ECKey dpopKey;
 
@@ -136,6 +133,84 @@ class PayRequestControllerDPoPIntegrationTest {
                         .header("X-FAPI-Interaction-ID", "interaction-123")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void dpopBoundTokenWithoutProofIsUnauthorized() throws Exception {
+        Jwt jwtToken = DPoPTestUtils.createJwtWithCnf(dpopKey);
+
+        mockMvc.perform(get(BASE_URL + "consent-123")
+                        .with(jwt().jwt(jwtToken))
+                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void plainBearerTokenWithoutProofIsAcceptedBecauseDpopIsOptional() throws Exception {
+        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
+                .claim("azp", "TPP-001").build();
+
+        mockMvc.perform(get(BASE_URL + "consent-123")
+                        .with(jwt().jwt(jwtToken))
+                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void proofWithPlainBearerTokenIsUnauthorized() throws Exception {
+        String path = BASE_URL + "consent-123";
+        String dpopProof = DPoPTestUtils.createDPoPProof(dpopKey, HttpMethod.GET, "http://localhost" + path);
+        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
+                .claim("azp", "TPP-001").build();
+
+        mockMvc.perform(get(path)
+                        .with(jwt().jwt(jwtToken))
+                        .header("DPoP", dpopProof)
+                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void financialIdHeaderNamingAnotherTppIsForbidden() throws Exception {
+        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
+                .claim("azp", "TPP-001").build();
+
+        mockMvc.perform(get(BASE_URL + "consent-123")
+                        .with(jwt().jwt(jwtToken))
+                        .header("x-fapi-financial-id", "TPP-OTHER")
+                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void tokenWithoutClientIdentityIsForbidden() throws Exception {
+        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "someone").build();
+
+        mockMvc.perform(get(BASE_URL + "consent-123")
+                        .with(jwt().jwt(jwtToken))
+                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void readingAnotherTppsPayRequestIsForbidden() throws Exception {
+        when(payRequestUseCase.getPayRequestStatus(any()))
+                .thenThrow(new PayRequestAccessDeniedException("Pay request participant mismatch"));
+        Jwt jwtToken = Jwt.withTokenValue("token").header("alg", "RS256").claim("sub", "tpp-user")
+                .claim("azp", "TPP-OTHER").build();
+
+        mockMvc.perform(get(BASE_URL + "consent-123")
+                        .with(jwt().jwt(jwtToken))
+                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void requestWithoutTokenIsUnauthorizedAndUnknownPathsAreDenied() throws Exception {
+        mockMvc.perform(get(BASE_URL + "consent-123").header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/internal/anything").with(jwt()))
+                .andExpect(status().isForbidden());
     }
 
     private static PayRequest sampleRequest() {

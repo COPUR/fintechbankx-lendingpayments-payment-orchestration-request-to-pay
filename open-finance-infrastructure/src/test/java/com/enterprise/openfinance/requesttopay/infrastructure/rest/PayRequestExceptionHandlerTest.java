@@ -1,11 +1,15 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
+import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestErrorResponse;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
 
@@ -70,5 +74,39 @@ class PayRequestExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().code()).isEqualTo("INTERNAL_ERROR");
+    }
+
+    @Test
+    void shouldMapOwnershipAndClientMismatchToForbidden() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+
+        assertThat(handler.handleForbidden(new PayRequestAccessDeniedException("other tpp"), request).getStatusCode())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(handler.handleForbidden(new AccessDeniedException("header"), request).getBody().code())
+                .isEqualTo("FORBIDDEN");
+    }
+
+    @Test
+    void shouldMapIdempotencyAndConcurrencyConflictsTo409() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+
+        ResponseEntity<PayRequestErrorResponse> reused = handler.handleIdempotencyConflict(
+                new IdempotencyKeyConflictException("reused"), request);
+        ResponseEntity<PayRequestErrorResponse> concurrent = handler.handleConcurrentUpdate(
+                new ObjectOptimisticLockingFailureException("PayRequestJpaEntity", "CONS-1"), request);
+
+        assertThat(reused.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(reused.getBody().code()).isEqualTo("IDEMPOTENCY_KEY_REUSED");
+        assertThat(concurrent.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(concurrent.getBody().code()).isEqualTo("CONCURRENT_UPDATE");
+    }
+
+    @Test
+    void shouldMapMalformedRequestTo400WithoutEchoingInput() {
+        ResponseEntity<PayRequestErrorResponse> response = handler.handleMalformedRequest(
+                new IllegalStateException("parse error at secret-field"), new MockHttpServletRequest());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().message()).doesNotContain("secret-field");
     }
 }

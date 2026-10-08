@@ -14,7 +14,7 @@ public record PayRequestAcceptedEvent(
         String debtorId,
         Instant occurredOn,
         int version
-) {
+) implements PayRequestDomainEvent {
     public PayRequestAcceptedEvent(
             String aggregateId,
             String paymentId,

@@ -25,9 +25,15 @@ class RequestToPayConfigurationTest {
         RequestToPayCacheProperties properties = new RequestToPayCacheProperties();
         properties.setTtl(Duration.ofSeconds(120));
 
-        PayRequestSettings settings = configuration.payRequestSettings(properties);
+        RequestToPayIdempotencyProperties idempotency = new RequestToPayIdempotencyProperties();
+        idempotency.setTtl(Duration.ofHours(12));
+
+        PayRequestSettings settings = configuration.payRequestSettings(properties, idempotency);
 
         assertThat(settings.cacheTtl()).isEqualTo(Duration.ofSeconds(120));
+        assertThat(settings.idempotencyTtl()).isEqualTo(Duration.ofHours(12));
+        assertThat(new RequestToPayIdempotencyProperties().getTtl()).isEqualTo(Duration.ofHours(24));
+        assertThat(configuration.payRequestCache()).isNotNull();
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.config;
 
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestSettings;
+import com.enterprise.openfinance.requesttopay.infrastructure.cache.InMemoryPayRequestCacheAdapter;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,7 +11,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 @Configuration
-@EnableConfigurationProperties(RequestToPayCacheProperties.class)
+@EnableConfigurationProperties({RequestToPayCacheProperties.class, RequestToPayIdempotencyProperties.class})
 public class RequestToPayConfiguration {
 
     @Bean
@@ -19,12 +20,22 @@ public class RequestToPayConfiguration {
     }
 
     @Bean
-    public PayRequestSettings payRequestSettings(RequestToPayCacheProperties properties) {
-        return new PayRequestSettings(properties.getTtl());
+    public PayRequestSettings payRequestSettings(RequestToPayCacheProperties cache,
+                                                 RequestToPayIdempotencyProperties idempotency) {
+        return new PayRequestSettings(cache.getTtl(), idempotency.getTtl());
     }
 
     @Bean
     public Supplier<String> payRequestConsentIdGenerator() {
         return () -> "CONS-RTP-" + UUID.randomUUID();
+    }
+
+    /**
+     * Per-replica status cache. Decisions refresh the deciding replica; other
+     * replicas may serve the previous status for at most the cache TTL.
+     */
+    @Bean
+    public InMemoryPayRequestCacheAdapter payRequestCache() {
+        return new InMemoryPayRequestCacheAdapter();
     }
 }

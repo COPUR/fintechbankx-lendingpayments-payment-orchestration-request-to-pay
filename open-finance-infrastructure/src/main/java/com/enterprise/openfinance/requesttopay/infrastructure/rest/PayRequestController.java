@@ -2,13 +2,14 @@ package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
 import com.enterprise.openfinance.requesttopay.domain.port.in.PayRequestUseCase;
 import com.enterprise.openfinance.requesttopay.domain.query.GetPayRequestStatusQuery;
-import com.enterprise.openfinance.requesttopay.infrastructure.cache.IdempotencyKeyRepository;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestDecisionRequest;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestRequest;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestResponse;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestStatusResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,37 +27,35 @@ import java.util.concurrent.TimeUnit;
 @RequestMapping("/api/v1/pay-requests")
 public class PayRequestController {
 
-    private final PayRequestUseCase useCase;
-    private final IdempotencyKeyRepository idempotencyKeyRepository;
+    /** x-fapi-interaction-id becomes the event correlationId: a single safe token, at most 128 characters. */
+    static final String INTERACTION_ID = "^[A-Za-z0-9._:-]{1,128}$";
 
-    public PayRequestController(PayRequestUseCase useCase, IdempotencyKeyRepository idempotencyKeyRepository) {
+    private final PayRequestUseCase useCase;
+
+    public PayRequestController(PayRequestUseCase useCase) {
         this.useCase = useCase;
-        this.idempotencyKeyRepository = idempotencyKeyRepository;
     }
 
     @PostMapping
     @DPoPSecured
     @FAPISecured
-    public ResponseEntity<?> createPayRequest(
-            @RequestHeader("X-FAPI-Interaction-ID") @NotBlank String interactionId,
-            @RequestHeader("X-Idempotency-Key") @NotBlank String idempotencyKey,
+    public ResponseEntity<PayRequestResponse> createPayRequest(
+            @RequestHeader("X-FAPI-Interaction-ID") @NotBlank @Pattern(regexp = INTERACTION_ID) String interactionId,
+            @RequestHeader("X-Idempotency-Key") @NotBlank @Size(max = 128) String idempotencyKey,
             @RequestHeader(value = "x-fapi-financial-id", required = false) String financialId,
             @RequestBody @Valid PayRequestRequest request
     ) {
-        String payloadHash = generateEtag(request.toString());
-        boolean isNewRequest = idempotencyKeyRepository.saveIfAbsent(idempotencyKey, payloadHash, 86400); // 24h TTL
-        if (!isNewRequest) {
-             return ResponseEntity.status(HttpStatus.CONFLICT).body("Duplicate request detected via Idempotency Key");
-        }
-
-        String tppId = resolveTppId(financialId);
-        var result = useCase.createPayRequest(request.toCommand(tppId, interactionId));
+        // Idempotency: a retry with the same key and payload returns the first result
+        // (same consent id, no new events); a different payload is 409.
+        String tppId = TppIdentity.resolve(financialId);
+        var result = useCase.createPayRequest(request.toCommand(tppId, interactionId, idempotencyKey));
         String self = "/api/v1/pay-requests/" + result.request().consentId();
 
         return ResponseEntity.created(java.net.URI.create(self))
                 .cacheControl(CacheControl.maxAge(0, TimeUnit.SECONDS).noStore())
                 .header("X-FAPI-Interaction-ID", interactionId)
                 .header("X-OF-Cache", result.cacheHit() ? "HIT" : "MISS")
+                .header("X-Idempotent-Replay", Boolean.toString(result.idempotentReplay()))
                 .body(PayRequestResponse.from(result, self));
     }
 
@@ -64,12 +63,12 @@ public class PayRequestController {
     @DPoPSecured
     @FAPISecured
     public ResponseEntity<PayRequestStatusResponse> getPayRequestStatus(
-            @RequestHeader("X-FAPI-Interaction-ID") @NotBlank String interactionId,
+            @RequestHeader("X-FAPI-Interaction-ID") @NotBlank @Pattern(regexp = INTERACTION_ID) String interactionId,
             @RequestHeader(value = "x-fapi-financial-id", required = false) String financialId,
             @PathVariable("consentId") @NotBlank String consentId,
             @RequestHeader(value = "If-None-Match", required = false) String ifNoneMatch
     ) {
-        String tppId = resolveTppId(financialId);
+        String tppId = TppIdentity.resolve(financialId);
 
         var result = useCase.getPayRequestStatus(new GetPayRequestStatusQuery(consentId, tppId, interactionId));
         String self = "/api/v1/pay-requests/" + consentId;
@@ -96,12 +95,12 @@ public class PayRequestController {
     @DPoPSecured
     @FAPISecured
     public ResponseEntity<PayRequestStatusResponse> acceptPayRequest(
-            @RequestHeader("X-FAPI-Interaction-ID") @NotBlank String interactionId,
+            @RequestHeader("X-FAPI-Interaction-ID") @NotBlank @Pattern(regexp = INTERACTION_ID) String interactionId,
             @RequestHeader(value = "x-fapi-financial-id", required = false) String financialId,
             @PathVariable("consentId") @NotBlank String consentId,
             @RequestBody PayRequestDecisionRequest decision
     ) {
-        String tppId = resolveTppId(financialId);
+        String tppId = TppIdentity.resolve(financialId);
 
         String paymentId = decision == null ? null : decision.paymentId();
         var result = useCase.acceptPayRequest(consentId, tppId, paymentId, interactionId);
@@ -117,12 +116,12 @@ public class PayRequestController {
     @DPoPSecured
     @FAPISecured
     public ResponseEntity<PayRequestStatusResponse> rejectPayRequest(
-            @RequestHeader("X-FAPI-Interaction-ID") @NotBlank String interactionId,
+            @RequestHeader("X-FAPI-Interaction-ID") @NotBlank @Pattern(regexp = INTERACTION_ID) String interactionId,
             @RequestHeader(value = "x-fapi-financial-id", required = false) String financialId,
             @PathVariable("consentId") @NotBlank String consentId,
             @RequestBody PayRequestDecisionRequest decision
     ) {
-        String tppId = resolveTppId(financialId);
+        String tppId = TppIdentity.resolve(financialId);
 
         var result = useCase.rejectPayRequest(consentId, tppId, interactionId);
         String self = "/api/v1/pay-requests/" + consentId;
@@ -131,13 +130,6 @@ public class PayRequestController {
                 .cacheControl(CacheControl.maxAge(0, TimeUnit.SECONDS).noStore())
                 .header("X-FAPI-Interaction-ID", interactionId)
                 .body(PayRequestStatusResponse.from(result, self));
-    }
-
-    private static String resolveTppId(String financialId) {
-        if (financialId == null || financialId.isBlank()) {
-            return "UNKNOWN_TPP";
-        }
-        return financialId.trim();
     }
 
     private static String generateEtag(String payload) {

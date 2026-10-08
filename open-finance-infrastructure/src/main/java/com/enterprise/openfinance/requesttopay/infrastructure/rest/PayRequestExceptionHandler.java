@@ -1,11 +1,21 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
+import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationException;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.ConstraintViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -26,6 +36,38 @@ public class PayRequestExceptionHandler {
                                                                    HttpServletRequest request) {
         return ResponseEntity.badRequest()
                 .body(PayRequestErrorResponse.of("REQUEST_FINALIZED", exception.getMessage(), interactionId(request)));
+    }
+
+    @ExceptionHandler({PayRequestAccessDeniedException.class, AccessDeniedException.class})
+    public ResponseEntity<PayRequestErrorResponse> handleForbidden(RuntimeException exception,
+                                                                   HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(PayRequestErrorResponse.of("FORBIDDEN", "Not allowed for this client", interactionId(request)));
+    }
+
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleIdempotencyConflict(IdempotencyKeyConflictException exception,
+                                                                             HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(PayRequestErrorResponse.of("IDEMPOTENCY_KEY_REUSED", exception.getMessage(), interactionId(request)));
+    }
+
+    @ExceptionHandler({OptimisticLockingFailureException.class, PessimisticLockingFailureException.class})
+    public ResponseEntity<PayRequestErrorResponse> handleConcurrentUpdate(RuntimeException exception,
+                                                                          HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(PayRequestErrorResponse.of("CONCURRENT_UPDATE",
+                        "The pay request was changed concurrently; retry", interactionId(request)));
+    }
+
+    @ExceptionHandler({MethodArgumentNotValidException.class, HandlerMethodValidationException.class,
+            ConstraintViolationException.class, MissingRequestHeaderException.class,
+            HttpMessageNotReadableException.class})
+    public ResponseEntity<PayRequestErrorResponse> handleMalformedRequest(Exception exception,
+                                                                          HttpServletRequest request) {
+        return ResponseEntity.badRequest()
+                .body(PayRequestErrorResponse.of("INVALID_REQUEST", "Request is missing or has invalid fields",
+                        interactionId(request)));
     }
 
     @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})

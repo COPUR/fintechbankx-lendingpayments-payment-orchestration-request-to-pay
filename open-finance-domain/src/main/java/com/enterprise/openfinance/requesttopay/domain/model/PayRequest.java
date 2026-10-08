@@ -6,10 +6,10 @@ import com.enterprise.openfinance.requesttopay.domain.event.PayRequestCreatedEve
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestDomainEvent;
 import com.enterprise.openfinance.requesttopay.domain.event.PayRequestRejectedEvent;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
+import com.enterprise.openfinance.requesttopay.domain.model.valueobject.Money;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.Currency;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,7 +17,7 @@ import java.util.Optional;
  * PayRequest aggregate (immutable). Every state change returns a new
  * instance whose {@link #version()} is one higher and whose
  * {@link #domainEvents()} holds the event of that change; instances loaded
- * from storage carry no events.
+ * from storage carry no events. The amount is a {@link Money} value object.
  *
  * @param version number of state changes since creation (0 when created);
  *                published as the envelope aggregateVersion
@@ -27,8 +27,7 @@ public record PayRequest(
         String tppId,
         String psuId,
         String creditorName,
-        BigDecimal amount,
-        String currency,
+        Money money,
         PayRequestStatus status,
         Instant requestedAt,
         Instant updatedAt,
@@ -42,8 +41,9 @@ public record PayRequest(
         tppId = requireNotBlank(tppId, "tppId");
         psuId = requireNotBlank(psuId, "psuId");
         creditorName = requireNotBlank(creditorName, "creditorName");
-        currency = requireIsoCurrency(currency);
-        amount = requireAmount(amount, currency);
+        if (money == null) {
+            throw new IllegalArgumentException("amount is required");
+        }
         if (status == null) {
             throw new IllegalArgumentException("status is required");
         }
@@ -66,8 +66,8 @@ public record PayRequest(
     public PayRequest(String consentId, String tppId, String psuId, String creditorName, BigDecimal amount,
                       String currency, PayRequestStatus status, Instant requestedAt, Instant updatedAt,
                       String paymentId, long version) {
-        this(consentId, tppId, psuId, creditorName, amount, currency, status, requestedAt, updatedAt, paymentId,
-                version, List.of());
+        this(consentId, tppId, psuId, creditorName, new Money(amount, currency), status, requestedAt, updatedAt,
+                paymentId, version, List.of());
     }
 
     /** Rehydrates a stored pay request at version 0 (no pending events). */
@@ -82,8 +82,8 @@ public record PayRequest(
         PayRequest draft = new PayRequest(consentId, command.tppId(), command.psuId(), command.creditorName(),
                 command.amount(), command.currency(), PayRequestStatus.AWAITING_AUTHORISATION,
                 command.requestedAt(), now, null, 0L);
-        return draft.withEvent(new PayRequestCreatedEvent(draft.consentId, draft.creditorName, draft.amount,
-                draft.currency, draft.psuId, now));
+        return draft.withEvent(new PayRequestCreatedEvent(draft.consentId, draft.creditorName, draft.amount(),
+                draft.currency(), draft.psuId, now));
     }
 
     public boolean belongsTo(String tppIdValue) {
@@ -97,8 +97,8 @@ public record PayRequest(
     /** The debtor declined; registers PayRequestRejectedEvent. */
     public PayRequest reject(Instant now) {
         ensureNotFinalized();
-        PayRequest next = new PayRequest(consentId, tppId, psuId, creditorName, amount, currency,
-                PayRequestStatus.REJECTED, requestedAt, now, paymentId, version + 1);
+        PayRequest next = new PayRequest(consentId, tppId, psuId, creditorName, money,
+                PayRequestStatus.REJECTED, requestedAt, now, paymentId, version + 1, List.of());
         return next.withEvent(new PayRequestRejectedEvent(consentId, now));
     }
 
@@ -106,10 +106,20 @@ public record PayRequest(
     public PayRequest consume(String paymentIdValue, Instant now) {
         ensureNotFinalized();
         String resolvedPaymentId = requireNotBlank(paymentIdValue, "paymentId");
-        PayRequest next = new PayRequest(consentId, tppId, psuId, creditorName, amount, currency,
-                PayRequestStatus.CONSUMED, requestedAt, now, resolvedPaymentId, version + 1);
-        return next.withEvent(new PayRequestAcceptedEvent(consentId, resolvedPaymentId, amount, currency,
+        PayRequest next = new PayRequest(consentId, tppId, psuId, creditorName, money,
+                PayRequestStatus.CONSUMED, requestedAt, now, resolvedPaymentId, version + 1, List.of());
+        return next.withEvent(new PayRequestAcceptedEvent(consentId, resolvedPaymentId, amount(), currency(),
                 creditorName, psuId, now));
+    }
+
+    /** Requested amount at the currency's minor unit. */
+    public BigDecimal amount() {
+        return money.amount();
+    }
+
+    /** ISO 4217 currency code. */
+    public String currency() {
+        return money.currency();
     }
 
     public Optional<String> paymentIdOptional() {
@@ -117,7 +127,7 @@ public record PayRequest(
     }
 
     private PayRequest withEvent(PayRequestDomainEvent event) {
-        return new PayRequest(consentId, tppId, psuId, creditorName, amount, currency, status, requestedAt,
+        return new PayRequest(consentId, tppId, psuId, creditorName, money, status, requestedAt,
                 updatedAt, paymentId, version, List.of(event));
     }
 
@@ -125,32 +135,6 @@ public record PayRequest(
         if (isFinalized()) {
             throw new PayRequestFinalizedException("Pay request already finalized");
         }
-    }
-
-    private static String requireIsoCurrency(String value) {
-        String code = requireNotBlank(value, "currency").toUpperCase(java.util.Locale.ROOT);
-        try {
-            if (code.length() == 3 && Currency.getInstance(code).getDefaultFractionDigits() >= 0) {
-                return code;
-            }
-        } catch (IllegalArgumentException ignored) {
-            // fall through
-        }
-        throw new IllegalArgumentException("currency must be an ISO 4217 code: " + code);
-    }
-
-    /** Positive, with no more decimals than the currency's minor unit (trailing zeros ignored). */
-    private static BigDecimal requireAmount(BigDecimal value, String currency) {
-        if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("amount must be positive");
-        }
-        int minorDigits = Currency.getInstance(currency).getDefaultFractionDigits();
-        BigDecimal normalised = value.stripTrailingZeros();
-        if (normalised.scale() > minorDigits) {
-            throw new IllegalArgumentException(
-                    "amount " + value.toPlainString() + ": " + currency + " allows " + minorDigits + " decimal places");
-        }
-        return normalised.setScale(minorDigits);
     }
 
     private static String requireNotBlank(String value, String field) {

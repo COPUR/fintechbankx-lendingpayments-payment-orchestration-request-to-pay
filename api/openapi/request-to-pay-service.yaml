@@ -232,7 +232,12 @@ components:
           properties:
             PsuId:
               type: string
-              maxLength: 128
+              pattern: '^[A-Za-z0-9-]{1,64}$'
+              maxLength: 64
+              description: >-
+                Opaque reference of the debtor PSU (the customer_id format):
+                letters, digits and hyphens only. Never a name, e-mail address,
+                phone number or account number.
             CreditorName:
               type: string
               maxLength: 140

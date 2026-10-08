@@ -228,6 +228,26 @@ class PayRequestControllerDPoPIntegrationTest {
     }
 
     @Test
+    void psuIdThatIsNotAnOpaqueReferenceIsAnInvalidRequest() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
+        String path = "/open-finance/v1/par";
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path)
+                        .header("Authorization", "DPoP token")
+                        .header("DPoP", DPoPTestUtils.createDPoPProof(dpopKey, HttpMethod.POST, "http://localhost" + path))
+                        .header("X-FAPI-Interaction-ID", "interaction-123")
+                        .header("X-Idempotency-Key", "idem-psu")
+                        .contentType("application/json")
+                        .content("""
+                                {"Data": {"PsuId": "jane.doe@example.com", "CreditorName": "Utilities Co",
+                                          "InstructedAmount": {"Amount": "10.00", "Currency": "AED"}}}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+        org.mockito.Mockito.verify(payRequestUseCase, org.mockito.Mockito.never()).createPayRequest(any());
+    }
+
+    @Test
     void readingAnotherTppsPayRequestIsForbidden() throws Exception {
         when(payRequestUseCase.getPayRequestStatus(any()))
                 .thenThrow(new PayRequestAccessDeniedException("Pay request participant mismatch"));

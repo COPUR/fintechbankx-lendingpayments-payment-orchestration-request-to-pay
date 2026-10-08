@@ -16,3 +16,6 @@ CREATE INDEX ix_outbox_parked_aggregate ON outbox_event (aggregate_id, created_s
 
 COMMENT ON COLUMN outbox_event.parked_at IS 'When the row was parked; NULL again after a manual replay (status back to PENDING).';
 COMMENT ON COLUMN outbox_event.park_reason IS 'Why the row was parked: "payload error (relay)" or the operator''s recorded reason (ticket and cause).';
+
+-- debtor_id holds the opaque PSU reference the TPP sent (customer_id format), not a pseudonym.
+COMMENT ON TABLE pay_request IS 'PayRequest aggregate (request to pay). debtor_id is the opaque PSU reference sent by the requesting TPP.';

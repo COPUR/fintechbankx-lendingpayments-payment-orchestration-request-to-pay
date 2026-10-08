@@ -152,7 +152,14 @@ components:
       properties:
         creditorName:
           type: string
-          description: Creditor display name as entered in the request.
+          maxLength: 140
+          description: >-
+            Creditor display name as entered by the requesting TPP (free text, up to 140
+            characters). Data classification: confidential (payment party data; may name a
+            natural person when the creditor is a sole trader). Consumers must not log it and
+            keep it only as long as their own retention allows. Inclusion pending the data
+            owner's sign-off.
+          x-data-classification: confidential
         amount:
           allOf:
           - $ref: '#/components/schemas/DecimalAmount'
@@ -163,8 +170,12 @@ components:
           pattern: ^[A-Z]{3}$
         debtorId:
           type: string
-          description: Pseudonymous PSU id of the debtor.
-          minLength: 1
+          description: >-
+            Opaque PSU reference of the debtor, exactly as the requesting TPP sent it in
+            Data.PsuId (the customer_id format). It is not pseudonymised by this service; it
+            carries no personal data by format. Data classification: internal identifier.
+          pattern: ^[A-Za-z0-9-]{1,64}$
+          x-data-classification: internal
       required:
       - creditorName
       - amount
@@ -189,11 +200,19 @@ components:
           pattern: ^[A-Z]{3}$
         creditorName:
           type: string
-          description: Creditor display name.
+          maxLength: 140
+          description: >-
+            Creditor display name. Data classification: confidential (see
+            PayRequestCreatedData.creditorName).
+          x-data-classification: confidential
         debtorId:
           type: string
-          description: Pseudonymous PSU id of the debtor.
-          minLength: 1
+          description: >-
+            Opaque PSU reference of the debtor, exactly as the requesting TPP sent it in
+            Data.PsuId (the customer_id format). It is not pseudonymised by this service; it
+            carries no personal data by format. Data classification: internal identifier.
+          pattern: ^[A-Za-z0-9-]{1,64}$
+          x-data-classification: internal
       required:
       - amount
       - currency

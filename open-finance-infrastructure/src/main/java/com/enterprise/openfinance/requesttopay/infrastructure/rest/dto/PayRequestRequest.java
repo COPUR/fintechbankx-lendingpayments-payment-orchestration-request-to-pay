@@ -42,7 +42,8 @@ public record PayRequestRequest(
     }
 
     public record Data(
-            @JsonProperty("PsuId") @NotBlank @Size(max = 128) String psuId,
+            /* Opaque PSU reference (customer_id format), never personal data. */
+            @JsonProperty("PsuId") @NotBlank @Pattern(regexp = CreatePayRequestCommand.PSU_ID_PATTERN) String psuId,
             @JsonProperty("CreditorName") @NotBlank @Size(max = 140) String creditorName,
             @JsonProperty("InstructedAmount") @NotNull @Valid Amount instructedAmount
     ) {

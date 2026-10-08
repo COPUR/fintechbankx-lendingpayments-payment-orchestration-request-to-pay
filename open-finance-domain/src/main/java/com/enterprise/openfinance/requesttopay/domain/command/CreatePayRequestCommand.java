@@ -9,6 +9,8 @@ import java.util.HexFormat;
 import java.util.Locale;
 
 /**
+ * @param psuId          opaque PSU reference (letters, digits and hyphens, at most 64 characters),
+ *                       never a name, e-mail address or account number
  * @param idempotencyKey optional x-idempotency-key; a retry with the same key
  *                       and the same {@link #fingerprint()} returns the first result
  */
@@ -23,9 +25,16 @@ public record CreatePayRequestCommand(
         String idempotencyKey
 ) {
 
+    /** Same format as the platform's customer_id: an opaque reference, no personal data. */
+    public static final String PSU_ID_PATTERN = "^[A-Za-z0-9-]{1,64}$";
+    private static final java.util.regex.Pattern PSU_ID = java.util.regex.Pattern.compile(PSU_ID_PATTERN);
+
     public CreatePayRequestCommand {
         tppId = requireNotBlank(tppId, "tppId");
         psuId = requireNotBlank(psuId, "psuId");
+        if (!PSU_ID.matcher(psuId).matches()) {
+            throw new IllegalArgumentException("psuId must be 1 to 64 letters, digits or hyphens");
+        }
         creditorName = requireNotBlank(creditorName, "creditorName");
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("amount must be positive");

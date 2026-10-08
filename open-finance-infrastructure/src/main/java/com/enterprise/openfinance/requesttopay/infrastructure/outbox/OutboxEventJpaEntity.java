@@ -74,6 +74,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "park_reason", length = 256)
     private String parkReason;
 
+    /** True once this park was counted in outbox_parked_events_total (V4). */
+    @Column(name = "park_counted", nullable = false)
+    private boolean parkCounted;
+
     protected OutboxEventJpaEntity() {
     }
 
@@ -111,6 +115,7 @@ public class OutboxEventJpaEntity {
     public String getLastError() { return lastError; }
     public String getParkReason() { return parkReason; }
     public Instant getParkedAt() { return parkedAt; }
+    public boolean isParkCounted() { return parkCounted; }
 
     void markPublished(Instant at) {
         this.status = Status.PUBLISHED;
@@ -129,6 +134,12 @@ public class OutboxEventJpaEntity {
         this.status = Status.PARKED;
         this.parkedAt = at;
         this.parkReason = reason;
+        this.parkCounted = true;
+    }
+
+    /** An operator park (runbook SQL) has been counted. */
+    void markParkCounted() {
+        this.parkCounted = true;
     }
 
     private static String truncate(String error) {

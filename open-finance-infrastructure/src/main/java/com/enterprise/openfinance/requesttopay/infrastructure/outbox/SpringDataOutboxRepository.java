@@ -36,6 +36,11 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
             + ".outbox.OutboxEventJpaEntity.Status.PUBLISHED and e.publishedAt < :before")
     int deletePublishedBefore(@Param("before") Instant before);
 
+    /** Parked rows not yet counted in outbox_parked_events_total: operator parks done in SQL. */
+    @Query("select e from OutboxEventJpaEntity e where e.status = com.enterprise.openfinance.requesttopay.infrastructure"
+            + ".outbox.OutboxEventJpaEntity.Status.PARKED and e.parkCounted = false")
+    List<OutboxEventJpaEntity> findUncountedParks();
+
     long countByStatus(OutboxEventJpaEntity.Status status);
 
     @Query(value = "select min(occurred_at) from outbox_event where status = 'PENDING'", nativeQuery = true)

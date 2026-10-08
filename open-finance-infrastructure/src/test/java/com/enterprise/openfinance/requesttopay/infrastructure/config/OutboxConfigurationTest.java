@@ -57,11 +57,17 @@ class OutboxConfigurationTest {
         configuration.outboxParkedGauge(registry, outbox);
         configuration.outboxOldestPendingAgeGauge(registry, outbox, clock);
 
-        registry.counter("outbox.parked.events", "exception", "RecordTooLargeException").increment();
-        registry.counter("outbox.send.failures", "exception", "TimeoutException").increment();
+        OutboxRelay relay = new OutboxRelay(outbox, mock(KafkaTemplate.class),
+                org.springframework.transaction.support.TransactionOperations.withoutTransaction(),
+                java.util.Optional::empty, clock, registry,
+                new OutboxRelay.Settings(100, Duration.ofSeconds(1), Duration.ofSeconds(10), Duration.ofDays(7)));
+        relay.recordSendFailure(new org.apache.kafka.common.errors.TimeoutException("x"));
+        relay.recordParked("RecordTooLargeException");
+        relay.recordParked(OutboxRelay.OPERATOR_PARK);
 
         String scrape = registry.scrape();
         assertThat(scrape).contains("outbox_parked_events_total{exception=\"RecordTooLargeException\"} 1.0")
+                .contains("outbox_parked_events_total{exception=\"OperatorPark\"} 1.0")
                 .contains("outbox_send_failures_total{exception=\"TimeoutException\"} 1.0")
                 .contains("outbox_oldest_pending_age_seconds 90.0")
                 .contains("outbox_parked_rows ")

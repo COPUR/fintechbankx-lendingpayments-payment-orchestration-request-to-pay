@@ -46,7 +46,9 @@ import io.micrometer.core.instrument.MeterRegistry;
  * <ul>
  *   <li>payload error that can never succeed for that row (RecordTooLarge,
  *   Serialization, InvalidTopic): the row is PARKED (error, parked_at and
- *   park_reason recorded; outbox.parked.events counter and outbox.parked.rows gauge alert),
+ *   park_reason recorded; outbox.parked.events counter and outbox.parked.rows gauge alert;
+ *   operator parks done with the runbook SQL are counted once by the relay, under
+ *   its lock, with exception="OperatorPark"),
  *   its aggregate's later
  *   rows stay pending, and the batch continues with other aggregates;</li>
  *   <li>every other error (broker timeouts and other retriable errors, SASL/IAM
@@ -70,6 +72,10 @@ public class OutboxRelay {
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     static final String PAYLOAD_PARK_REASON = "payload error (relay)";
+    static final String SEND_FAILURES = "outbox.send.failures";
+    static final String PARKED_EVENTS = "outbox.parked.events";
+    /** exception tag of a park an operator made with the runbook SQL. */
+    public static final String OPERATOR_PARK = "OperatorPark";
 
     /** How a failed send is handled. */
     enum Failure { PAYLOAD, STOP }
@@ -150,7 +156,14 @@ public class OutboxRelay {
     }
 
     private int relayBatch() {
-        List<OutboxEventJpaEntity> batch = transactions.execute(status -> outbox.findPendingBatch(settings.batchSize()));
+        int[] operatorParks = new int[1];
+        List<OutboxEventJpaEntity> batch = transactions.execute(status -> {
+            operatorParks[0] = markOperatorParksCounted();
+            return outbox.findPendingBatch(settings.batchSize());
+        });
+        for (int i = 0; i < operatorParks[0]; i++) {
+            recordParked(OPERATOR_PARK);
+        }
         if (batch == null || batch.isEmpty()) {
             runSucceeded();
             return 0;
@@ -176,7 +189,7 @@ public class OutboxRelay {
                 return sent;
             } catch (Exception e) {
                 String exception = rootCause(e).getClass().getSimpleName();
-                meters.counter("outbox.send.failures", "exception", exception).increment();
+                recordSendFailure(e);
                 if (classify(e) == Failure.PAYLOAD) {
                     // later rows of this aggregate wait behind the parked row
                     blockedAggregates.add(row.getAggregateId());
@@ -195,10 +208,33 @@ public class OutboxRelay {
 
     private void park(OutboxEventJpaEntity row, String exception, String error) {
         Instant now = clock.instant();
-        meters.counter("outbox.parked.events", "exception", exception).increment();
         update(row.getEventId(), r -> r.park(error, PAYLOAD_PARK_REASON, now));
+        recordParked(exception);
         log.error("Outbox relay parked event {} for {}: {}; its aggregate's later events wait; replay it by hand",
                 row.getEventId(), row.getTopic(), error);
+    }
+
+    /** Counts each failed send, tagged with the unwrapped exception class only. */
+    public void recordSendFailure(Throwable failure) {
+        meters.counter(SEND_FAILURES, "exception", rootCause(failure).getClass().getSimpleName()).increment();
+    }
+
+    /** Counts a parked row (alert on any increase), tagged with the exception class or OperatorPark only. */
+    public void recordParked(String exceptionClass) {
+        meters.counter(PARKED_EVENTS, "exception", exceptionClass).increment();
+    }
+
+    /**
+     * Operator parks happen in SQL (runbook); each is counted once. Runs inside the batch-read
+     * transaction while this replica holds the relay lock, so only one replica counts.
+     */
+    private int markOperatorParksCounted() {
+        List<OutboxEventJpaEntity> uncounted = outbox.findUncountedParks();
+        for (OutboxEventJpaEntity parked : uncounted) {
+            parked.markParkCounted();
+            log.warn("Outbox event {} for {} was parked by an operator", parked.getEventId(), parked.getTopic());
+        }
+        return uncounted.size();
     }
 
     private void update(UUID eventId, Consumer<OutboxEventJpaEntity> change) {

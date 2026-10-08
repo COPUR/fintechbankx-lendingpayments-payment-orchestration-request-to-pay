@@ -219,6 +219,7 @@ class OutboxRelayTest {
         assertThat(poison.getAttempts()).isEqualTo(1);
         assertThat(poison.getParkedAt()).isEqualTo(NOW);
         assertThat(poison.getParkReason()).isEqualTo("payload error (relay)");
+        assertThat(poison.isParkCounted()).as("counted when the relay parked it").isTrue();
         assertThat(poison.getLastError()).startsWith(payloadError.getClass().getSimpleName());
         assertThat(failures(payloadError.getClass().getSimpleName())).isEqualTo(1.0);
         assertThat(meters.get("outbox.parked.events").tag("exception", payloadError.getClass().getSimpleName())
@@ -304,6 +305,41 @@ class OutboxRelayTest {
         assertThat(OutboxRelay.classify(new java.util.concurrent.ExecutionException(
                 new KafkaProducerException(record, "send failed", new InvalidTopicException("x")))))
                 .isEqualTo(OutboxRelay.Failure.PAYLOAD);
+    }
+
+    /**
+     * Operators park rows with the runbook SQL, outside the app. The relay, holding the relay
+     * lock (one replica), counts each such park once in outbox.parked.events with
+     * exception="OperatorPark", in the short transaction that reads the batch.
+     */
+    @Test
+    void anOperatorParkIsCountedOnceByTheRelay() {
+        OutboxEventJpaEntity operatorParked = row("CONS-1", 0);
+        // What the runbook's operator SQL leaves behind: parked with a reason, not yet counted.
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "status", OutboxEventJpaEntity.Status.PARKED);
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedAt", NOW);
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkReason", "operator: INC-1 broker ACL");
+        when(outbox.findUncountedParks()).thenReturn(List.of(operatorParked)).thenReturn(List.of());
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(operatorParked.isParkCounted()).isTrue();
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count()).isEqualTo(1.0);
+        assertThat(meters.get("outbox.parked.events").counter().getId().getTags())
+                .extracting(io.micrometer.core.instrument.Tag::getKey).containsExactly("exception");
+        // counted in the batch-read transaction, not one of its own
+        assertThat(transactions.count.get()).isEqualTo(2);
+    }
+
+    @Test
+    void parksAreNotCountedByAReplicaWithoutTheRelayLock() {
+        lock.available = false;
+
+        relay.relayOnce();
+
+        verify(outbox, never()).findUncountedParks();
+        assertThat(meters.find("outbox.parked.events").counters()).isEmpty();
     }
 
     @Test

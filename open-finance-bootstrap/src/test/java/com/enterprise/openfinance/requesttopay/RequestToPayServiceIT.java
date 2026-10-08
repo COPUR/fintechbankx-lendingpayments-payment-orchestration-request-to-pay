@@ -358,12 +358,20 @@ class RequestToPayServiceIT {
                         .contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\": \"PAY-P1\"}"))
                 .andExpect(status().isCreated());
         String otherAggregate = create("idem-park-b", "20.00", "ix-park-b");
-        jdbc.update("update " + SCHEMA + ".outbox_event set status = 'PARKED', parked_at = now(), attempts = 1, "
-                + "last_error = 'RecordTooLargeException', park_reason = 'payload error (relay)' where aggregate_id = ? and aggregate_version = 0", parkedAggregate);
+        // the runbook's operator park: status, parked_at and a recorded reason; park_counted stays false
+        jdbc.update("update " + SCHEMA + ".outbox_event set status = 'PARKED', parked_at = now(), "
+                + "park_reason = 'operator: INC-1 broker ACL' where aggregate_id = ? and aggregate_version = 0", parkedAggregate);
         KafkaTemplate<String, String> kafka = Mockito.mock(KafkaTemplate.class);
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(null));
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        OutboxRelay countingRelay = relay(kafka, Duration.ofSeconds(5), meters);
 
-        assertThat(relay(kafka, Duration.ofSeconds(5)).relayOnce()).isEqualTo(1);
+        assertThat(countingRelay.relayOnce()).isEqualTo(1);
+        assertThat(countingRelay.relayOnce()).isZero();
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count())
+                .as("the operator park is counted once, not on every run").isEqualTo(1.0);
+        assertThat(jdbc.queryForObject("select park_counted from " + SCHEMA + ".outbox_event where status = 'PARKED' "
+                + "and aggregate_id = ?", Boolean.class, parkedAggregate)).isTrue();
 
         org.mockito.ArgumentCaptor<ProducerRecord<String, String>> sent = org.mockito.ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(sent.capture());
@@ -411,10 +419,37 @@ class RequestToPayServiceIT {
         again.get().close();
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void aRelayParkIsCountedWhenItHappensAndNotAgainAsAnOperatorPark() throws Exception {
+        String consentId = create("idem-poison", "40.00", "ix-poison");
+        KafkaTemplate<String, String> kafka = Mockito.mock(KafkaTemplate.class);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
+                new org.apache.kafka.common.errors.RecordTooLargeException("record too large")));
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        OutboxRelay countingRelay = relay(kafka, Duration.ofSeconds(5), meters);
+
+        countingRelay.relayOnce();
+        countingRelay.relayOnce();
+
+        Map<String, Object> row = jdbc.queryForMap("select status, park_reason, park_counted from "
+                + SCHEMA + ".outbox_event where aggregate_id = ?", consentId);
+        assertThat(row.get("status")).isEqualTo("PARKED");
+        assertThat(row.get("park_reason")).isEqualTo("payload error (relay)");
+        assertThat(row.get("park_counted")).isEqualTo(true);
+        assertThat(meters.get("outbox.parked.events").tag("exception", "RecordTooLargeException").counter().count())
+                .isEqualTo(1.0);
+        assertThat(meters.find("outbox.parked.events").tag("exception", "OperatorPark").counter()).isNull();
+    }
+
     private OutboxRelay relay(KafkaTemplate<String, String> kafka, Duration sendTimeout) {
+        return relay(kafka, sendTimeout, new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+    }
+
+    private OutboxRelay relay(KafkaTemplate<String, String> kafka, Duration sendTimeout,
+                              io.micrometer.core.instrument.MeterRegistry meters) {
         return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                new PostgresSessionRelayLock(dataSource, OutboxRelay.RELAY_LOCK_KEY), Clock.systemUTC(),
-                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                new PostgresSessionRelayLock(dataSource, OutboxRelay.RELAY_LOCK_KEY), Clock.systemUTC(), meters,
                 new OutboxRelay.Settings(100, sendTimeout, Duration.ofSeconds(10), Duration.ofDays(7)));
     }
 

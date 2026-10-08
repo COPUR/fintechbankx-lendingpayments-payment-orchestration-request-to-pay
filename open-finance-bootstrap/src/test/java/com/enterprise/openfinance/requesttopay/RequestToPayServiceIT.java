@@ -260,15 +260,46 @@ class RequestToPayServiceIT {
         mvc.perform(get("/open-finance/v1/payment-consents/{id}", consentId)
                         .with(dpop("TPP-OTHER"))
                         .header("X-FAPI-Interaction-ID", "ix"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
         mvc.perform(post("/open-finance/v1/payment-consents/{id}/reject", consentId)
                         .with(dpop("TPP-OTHER"))
                         .header("X-FAPI-Interaction-ID", "ix")
                         .contentType(MediaType.APPLICATION_JSON).content("{}"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
 
         assertThat(jdbc.queryForObject("select status from " + SCHEMA + ".pay_request where consent_id = ?",
                 String.class, consentId)).isEqualTo("AWAITING_AUTHORISATION");
+    }
+
+    @Test
+    void anUnknownPayRequestAndAnotherTppsGetTheSame404Body() throws Exception {
+        String othersConsent = create("idem-probe", "10.00", "ix-probe");
+        String unknownConsent = "CONS-RTP2-does-not-exist";
+
+        for (String action : List.of("", "/accept", "/reject")) {
+            JsonNode unknown = refusedBody(action, unknownConsent);
+            JsonNode notOwned = refusedBody(action, othersConsent);
+
+            ((com.fasterxml.jackson.databind.node.ObjectNode) unknown).remove("timestamp");
+            ((com.fasterxml.jackson.databind.node.ObjectNode) notOwned).remove("timestamp");
+            assertThat(unknown).as("same code, message and fields for '%s'; only the timestamp differs", action)
+                    .isEqualTo(notOwned);
+            assertThat(unknown.get("code").asText()).isEqualTo("NOT_FOUND");
+            assertThat(unknown.get("message").asText()).isEqualTo("Pay request not found");
+        }
+        assertThat(jdbc.queryForObject("select status from " + SCHEMA + ".pay_request where consent_id = ?",
+                String.class, othersConsent)).isEqualTo("AWAITING_AUTHORISATION");
+    }
+
+    /** The response of TPP-OTHER reading ("") or deciding ("/accept", "/reject") {@code consentId}; must be 404. */
+    private JsonNode refusedBody(String action, String consentId) throws Exception {
+        String path = "/open-finance/v1/payment-consents/" + consentId + action;
+        MockHttpServletRequestBuilder request = action.isEmpty() ? get(path)
+                : post(path).contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\": \"PAY-PROBE\"}");
+        String body = mvc.perform(request.with(dpop("TPP-OTHER")).header("X-FAPI-Interaction-ID", "ix-probe"))
+                .andExpect(status().isNotFound())
+                .andReturn().getResponse().getContentAsString();
+        return new ObjectMapper().readTree(body);
     }
 
     @Test
@@ -597,7 +628,7 @@ class RequestToPayServiceIT {
     private static Jwt boundToken(String tppId) {
         try {
             return Jwt.withTokenValue(tppId).header("alg", "PS256").subject("tpp-user")
-                    .claim("azp", tppId).claim("scope", "payments").audience(List.of("svc-pay-request-to-pay"))
+                    .claim("azp", tppId).claim("scope", "payments").claim("fbx_client_type", "open-finance-tpp").audience(List.of("svc-pay-request-to-pay"))
                     .claim("cnf", Map.of("jkt", TPP_KEY.computeThumbprint("SHA-256").toString()))
                     .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
         } catch (Exception e) {

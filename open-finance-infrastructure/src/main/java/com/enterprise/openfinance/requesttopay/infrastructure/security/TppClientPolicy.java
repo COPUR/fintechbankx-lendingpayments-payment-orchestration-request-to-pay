@@ -12,14 +12,16 @@ import java.util.List;
  * DPoP binding (checked by the proof filter):
  * <ul>
  *   <li>the token carries the payments scope ({@code requiredScope});</li>
- *   <li>the calling client ({@code azp}, else {@code client_id}) is a TPP, not a
- *   platform service client ({@code svc-*}) and not a first-party channel
- *   client (fintechbankx-web, fintechbankx-mobile). Keycloak adds this
- *   service's audience to service and channel clients too, so aud alone does
- *   not say "TPP";</li>
- *   <li>when the token carries the client-type claim, it names a TPP. The realm
- *   tags TPP clients fbx.client-type=open-finance-tpp but does not put it in
- *   tokens yet; once a mapper does, the claim is checked here.</li>
+ *   <li>the calling client ({@code azp}, else {@code client_id}) is never a
+ *   platform service client ({@code svc-*}) or a first-party channel client
+ *   (fintechbankx-web, fintechbankx-mobile). Keycloak adds this service's
+ *   audience to service and channel clients too, so aud alone does not say
+ *   "TPP";</li>
+ *   <li>the token carries the client-type claim and it names a TPP
+ *   ({@code open-finance-tpp}); a token without the claim is refused (fail
+ *   closed). The realm's default client scope fbx-client-type-open-finance-tpp
+ *   puts fbx_client_type=open-finance-tpp on every open-finance TPP client's
+ *   token.</li>
  * </ul>
  */
 public final class TppClientPolicy {
@@ -38,8 +40,14 @@ public final class TppClientPolicy {
         this.requiredScope = requiredScope.trim();
         this.deniedClientPrefixes = clean(deniedClientPrefixes);
         this.deniedClientIds = clean(deniedClientIds);
-        this.clientTypeClaim = clientTypeClaim;
-        this.tppClientType = tppClientType;
+        if (clientTypeClaim == null || clientTypeClaim.isBlank()) {
+            throw new IllegalArgumentException("requesttopay.security.tpp.client-type-claim must be set");
+        }
+        if (tppClientType == null || tppClientType.isBlank()) {
+            throw new IllegalArgumentException("requesttopay.security.tpp.client-type must be set");
+        }
+        this.clientTypeClaim = clientTypeClaim.trim();
+        this.tppClientType = tppClientType.trim();
     }
 
     public boolean allows(Authentication authentication) {
@@ -59,10 +67,7 @@ public final class TppClientPolicy {
         if (deniedClientIds.contains(client) || deniedClientPrefixes.stream().anyMatch(client::startsWith)) {
             return false;
         }
-        if (clientTypeClaim != null && !clientTypeClaim.isBlank() && token.hasClaim(clientTypeClaim)) {
-            return tppClientType != null && tppClientType.equals(token.getClaimAsString(clientTypeClaim));
-        }
-        return true;
+        return tppClientType.equals(token.getClaimAsString(clientTypeClaim));
     }
 
     /** The OAuth2 client that obtained the token: azp, else client_id. */

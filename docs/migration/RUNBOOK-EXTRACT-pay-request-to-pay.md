@@ -56,7 +56,7 @@ no runnable application. The service never reads monolith tables and no other se
 |---|---|
 | ADR-030 (`docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md`) accepted and this PR merged | payments owner, API governance |
 | Payments owner has answered ADR-030 open question 1 (who may accept or reject). Until then `OUTBOX_RELAY_ENABLED` stays `false` in every environment, so no consumer acts on `Accepted` | payments owner |
-| Keycloak: confidential client `svc-pay-request-to-pay`; Audience mapper adding `svc-pay-request-to-pay` to every TPP client allowed to call it; client scope `payments` on those TPP clients (ADR-030 open question 2); optionally a mapper emitting `fbx_client_type` from the client attribute `fbx.client-type` (the service then requires `open-finance-tpp`); TPP clients DPoP-enabled | identity (fintechbankx-platform-identity-keycloak-ldap) |
+| Keycloak: confidential client `svc-pay-request-to-pay`; Audience mapper adding `svc-pay-request-to-pay` to every TPP client allowed to call it; client scope `payments` on those TPP clients (ADR-030 open question 2); default client scope `fbx-client-type-open-finance-tpp` on every TPP client, emitting `fbx_client_type` = `open-finance-tpp` (required: the service refuses a token without it); TPP clients DPoP-enabled | identity (fintechbankx-platform-identity-keycloak-ldap) |
 | Mesh contract for `payment-request-to-pay-service` declares `datastores: [aurora-postgresql, msk]` (egress to the Aurora writer and reader on 5432 and the MSK IAM brokers on 9098, plus regional STS for IRSA); without it the readiness group (`db`) fails under `REGISTRY_ONLY` | fintechbankx-platform-mesh-security-service-mesh |
 | Mesh: gateway routes for the four exact paths in section 3, with the platform forwarded-header rules (the DPoP `htu` check uses `X-Forwarded-Proto/Host/Port`) and the cohort allow-list; inbound ALLOW for `cluster.local/ns/istio-ingress/sa/istio-ingressgateway` to `payment-request-to-pay-service` on 8080 only (8081 is never public) | fintechbankx-platform-mesh-security-service-mesh |
 | Topics `evt.pay.rtp.{created,accepted,rejected}.v1` in the topic catalog and on MSK (RF 3, `min.insync.replicas=2`); topic-scoped MSK IAM policy for this service's IRSA role (write on the three topics only) | fintechbankx-platform-event-streaming-kafka |
@@ -139,7 +139,7 @@ one backend; move a TPP only after telling it that keys sent before the move are
 | 2 | Apply R1 to R4 with an empty cohort (no TPP traffic moves); check R2/R4 still reach the monolith | remove R1 to R4 | any 404 on the four paths that did not occur before |
 | 3 | Canary: add one pilot TPP client to `rtp-cutover-cohort`; after 48 h clean, add TPPs in batches to about 10 %, then 50 %, then all, 48 h clean at each | remove every TPP from the cohort (R3 empty); R1 keeps serving `CONS-RTP2-` requests here | 5xx rate on the four paths above 1 %; p99 above 1 s; 404 rate on `/payment-consents/*` above its pre-cutover baseline (a misrouted follow-up); any idempotent-replay miss (the same TPP and `X-Idempotency-Key` hash seen by both backends within 24 h, gateway access log); 401 `invalid_dpop_proof` or 403 above 5 % of a TPP's calls (TPP not ready: remove that TPP only) |
 | 4 | Soak: all TPPs in the cohort for **two weeks** at 100 % with every trigger clean; relay still off | as step 3 | as step 3 |
-| 5 | After the soak and once the payments owner has answered ADR-030 open question 1: tag the monolith (`rtp-extract-pre-cutover`), then `OUTBOX_RELAY_ENABLED=true`; events written since step 3 are relayed in order. Watch `outbox_pending_events` drain | relay off; unsent events wait in the outbox (published events cannot be recalled) | any increase of `outbox_parked_events_total`; `outbox_oldest_pending_age_seconds` above 300 for 10 minutes; `outbox_relay_consecutive_failed_runs` above 5 |
+| 5 | After the soak and once the payments owner has answered ADR-030 open question 1: tag the monolith (`rtp-extract-pre-cutover`), then `OUTBOX_RELAY_ENABLED=true`; events written since step 3 are relayed in order. Watch `outbox_pending_events` drain | relay off; unsent events wait in the outbox (published events cannot be recalled) | the platform alert `OutboxEventsParked` fires for this service; `outbox_parked_rows` above 0; `outbox_oldest_pending_age_seconds` above 300 for 10 minutes; `outbox_relay_consecutive_failed_runs` above 5 |
 | 6 | Remove the `requesttopay` package and controller from the monolith (follow-up PR in enterprise-loan-management-system); then delete R2 and R4 | revert that PR from the tag `rtp-extract-pre-cutover` and restore R2/R4 | monolith build or tests fail |
 
 ### Rollback during the canary and soak (steps 3 and 4)
@@ -161,11 +161,15 @@ owners' agreement.
    (`correlationId`) and the Kafka record (`traceparent`).
 2. Logs in the central sink; no PSU reference, creditor name or amount in labels or attributes.
 3. Metrics baseline before step 3: request rate, 4xx/5xx and p99 per path; gateway 404 rate on the four paths.
-4. Alerts (to be defined by the platform observability team; names from this service):
-   - `outbox_oldest_pending_age_seconds` above 300 (relay stalled; only meaningful with the relay enabled)
-   - any increase of `outbox_send_failures_total{exception}` sustained over 5 minutes
-   - any increase of `outbox_parked_events_total{exception}` (a consumer is missing an event; `exception="OperatorPark"` for operator parks)
-   - `outbox_parked_rows` above 0
+4. Alerts. This chart ships no alert rules. Parked events are covered by the platform alert `OutboxEventsParked`
+   (any increase of `outbox_parked_events_total` over 15 minutes, per `exception`, severity warning, routed by
+   squad; `exception` is the payload error class or `OperatorPark`). The platform outbox rules also cover a
+   stalled relay (`OutboxRelayStalled`, oldest pending event above 900 s) and send failures
+   (`OutboxSendFailures`). Service-specific asks beyond those, for the observability team:
+   - `outbox_parked_rows` above 0 (the authoritative signal: the gauge is read from the table, while the counter is
+     best-effort, see section 5)
+   - `outbox_oldest_pending_age_seconds` above 300 for 10 minutes (stricter than the platform's 900 s; only
+     meaningful with the relay enabled)
    - `outbox_relay_consecutive_failed_runs` above 5
    - 5xx, p99, 404 and idempotent-replay-miss triggers of section 3
 
@@ -211,6 +215,11 @@ WHERE event_id = '<event id>';
 
 The relay counts each operator park once on its next run (`outbox_parked_events_total{exception="OperatorPark"}`,
 column `park_counted`, V4). Its pay request's later events wait until it is replayed as above.
+
+Counting is best-effort: the relay marks `park_counted` in its batch transaction and increments the counter after
+that commits, so a crash in between loses one increment rather than counting a park twice, and the counter restarts
+at zero with the process. Decide what is parked from the gauge `outbox_parked_rows` (read from the table) or the
+query above, never from the counter.
 
 Evidence retention: published outbox rows are purged after 7 days (`requesttopay.outbox.retention: P7D`). Export
 the rows behind any incident (event ids, `park_reason`, `last_error`) to the incident record before then.

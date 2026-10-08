@@ -4,6 +4,11 @@
 -- row. Operator parks leave it false; the relay, holding the relay lock (so one
 -- replica), counts them once on its next run with exception="OperatorPark" and
 -- sets it. Rows parked before V4 count as already counted.
+-- park_counted is set in the relay's batch-read transaction and the counter is
+-- incremented after that commit, so a crash in between loses one increment
+-- instead of counting a park twice: the counter is best-effort (at most once);
+-- the gauge outbox_parked_rows (outbox.parked.rows), read from this table, is
+-- authoritative.
 
 ALTER TABLE outbox_event ADD COLUMN park_counted BOOLEAN NOT NULL DEFAULT false;
 

@@ -2,7 +2,7 @@ package com.enterprise.openfinance.requesttopay.application;
 
 import com.enterprise.openfinance.requesttopay.domain.command.CreatePayRequestCommand;
 import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
-import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.model.IdempotencyRecord;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
@@ -89,7 +89,7 @@ public class PayRequestService implements PayRequestUseCase {
         }
 
         PayRequest request = repositoryPort.findByConsentId(query.consentId())
-                .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
+                .orElseThrow(PayRequestService::notFound);
 
         ensureOwnership(request, query.tppId());
 
@@ -117,7 +117,7 @@ public class PayRequestService implements PayRequestUseCase {
     private PayRequestResult decide(String consentId, String tppId, String interactionId,
                                     UnaryOperator<PayRequest> decision) {
         PayRequest request = repositoryPort.findByConsentIdForUpdate(consentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
+                .orElseThrow(PayRequestService::notFound);
         ensureOwnership(request, tppId);
 
         PayRequest decided = decision.apply(request);
@@ -144,9 +144,14 @@ public class PayRequestService implements PayRequestUseCase {
         return PayRequestResult.replayOf(original);
     }
 
+    /** An unknown id is answered exactly like another TPP's pay request (ADR-025 item 5), so ids cannot be probed. */
+    private static PayRequestNotFoundException notFound() {
+        return new PayRequestNotFoundException(PayRequestNotFoundException.Reason.NOT_FOUND);
+    }
+
     private static void ensureOwnership(PayRequest request, String tppId) {
         if (!request.belongsTo(tppId)) {
-            throw new PayRequestAccessDeniedException("Pay request participant mismatch");
+            throw new PayRequestNotFoundException(PayRequestNotFoundException.Reason.OTHER_TPP);
         }
     }
 

@@ -1,6 +1,6 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
-import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestStatus;
@@ -228,6 +228,31 @@ class PayRequestControllerDPoPIntegrationTest {
     }
 
     @Test
+    void aTokenFromAnUnknownClientWithoutTheClientTypeClaimIsForbidden() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-UNKNOWN", "payments", java.util.Map.of()));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aTokenWithoutTheClientTypeClaimIsForbiddenEvenForAKnownTppClient() throws Exception {
+        // TPP-001 was on the former allowed-clients list; the claim is now required (fail closed).
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001", "payments", java.util.Map.of()));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void anyTppClientWithTheClaimAndThePaymentsScopeIsServed() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-NEW", "payments", DPoPTestUtils.TPP_CLIENT_TYPE));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void psuIdThatIsNotAnOpaqueReferenceIsAnInvalidRequest() throws Exception {
         token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
         String path = "/open-finance/v1/par";
@@ -248,13 +273,15 @@ class PayRequestControllerDPoPIntegrationTest {
     }
 
     @Test
-    void readingAnotherTppsPayRequestIsForbidden() throws Exception {
+    void readingAnotherTppsPayRequestIsNotFound() throws Exception {
         when(payRequestUseCase.getPayRequestStatus(any()))
-                .thenThrow(new PayRequestAccessDeniedException("Pay request participant mismatch"));
+                .thenThrow(new PayRequestNotFoundException(PayRequestNotFoundException.Reason.OTHER_TPP));
         token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-OTHER"));
 
         mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.message").value("Pay request not found"));
     }
 
     @Test

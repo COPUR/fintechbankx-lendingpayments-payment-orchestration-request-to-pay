@@ -61,6 +61,13 @@ Status: **Proposed** until the Recurring and Bulk Payments Squad merges and rele
 | Event contract | [api/asyncapi/svc-pay-request-to-pay.yaml](api/asyncapi/svc-pay-request-to-pay.yaml) |
 | HTTP contract | [api/openapi/request-to-pay-service.yaml](api/openapi/request-to-pay-service.yaml) (realignment: Proposed [ADR](docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md)) |
 
+TPP admission (fail closed): besides `aud` and the `payments` scope, a token must carry the claim
+`fbx_client_type` = `open-finance-tpp` (`requesttopay.security.tpp.client-type-claim` and `.client-type`).
+A token without the claim, or with another value, is 403. The realm's default client scope
+`fbx-client-type-open-finance-tpp` emits it on every open-finance TPP client (identity realm-as-code,
+Proposed). Service clients (`svc-*`) and the first-party channels are refused even with the claim. Which
+TPPs reach the service during the cut-over is decided at the gateway (cohort `rtp-cutover-cohort`), not here.
+
 Module layout (layout B): `open-finance-domain` (PayRequest aggregate, events, ports) ← `open-finance-application`
 (use cases) ← `open-finance-infrastructure` (JPA, JDBC idempotency, outbox, REST, security) ← `open-finance-bootstrap`
 (Spring Boot application).

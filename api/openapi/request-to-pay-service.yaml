@@ -15,6 +15,10 @@ info:
     compatibility. The id is a pay-request id minted by this service and local
     to it (and to the evt.pay.rtp events); it is not a consent of
     svc-of-consent-authorization and cannot be looked up there.
+
+    Changes from the monolith's behaviour (see REGRESSION_MAPPING):
+    other-TPP resource ids answer 404 (was 400), with the same body as an
+    unknown id; X-Idempotency-Key required on create.
 servers:
   - url: https://api.example.com/open-finance/v1
 paths:
@@ -62,6 +66,10 @@ paths:
   /payment-consents/{consentId}:
     get:
       summary: Get request to pay status
+      description: >-
+        An unknown consentId and another TPP's pay request get the same 404
+        body: code NOT_FOUND, message "Pay request not found" (the reason is
+        logged by the service only), so pay request ids cannot be probed.
       operationId: getRequestToPay
       security:
         - dpopAuth: []
@@ -104,6 +112,9 @@ paths:
         debtor's authorisation or the payment. Repeating the call with the same
         paymentId returns 201 with the current state and publishes nothing; a
         different paymentId, or a rejected request, is REQUEST_FINALIZED.
+        An unknown consentId and another TPP's pay request get the same 404
+        body: code NOT_FOUND, message "Pay request not found" (the reason is
+        logged by the service only), so pay request ids cannot be probed.
       operationId: acceptRequestToPay
       security:
         - dpopAuth: []
@@ -142,6 +153,9 @@ paths:
         The TPP that created the request reports that the debtor declined.
         Repeating the call on a rejected request returns 200 with the current
         state and publishes nothing; a consumed request is REQUEST_FINALIZED.
+        An unknown consentId and another TPP's pay request get the same 404
+        body: code NOT_FOUND, message "Pay request not found" (the reason is
+        logged by the service only), so pay request ids cannot be probed.
       operationId: rejectRequestToPay
       security:
         - dpopAuth: []
@@ -181,9 +195,11 @@ components:
       description: >-
         Authorization: DPoP <access token> from the fintechbankx realm, with
         cnf.jkt bound to the key of the DPoP proof header; aud must contain
-        svc-pay-request-to-pay and scope must contain payments. The calling
-        client (azp) must be a TPP: platform service clients (svc-*) and the
-        first-party web and mobile clients are refused with 403. The DPoP
+        svc-pay-request-to-pay and scope must contain payments. The token must
+        carry the claim fbx_client_type with the value open-finance-tpp; a
+        token without it, or with another value, is refused with 403 (fail
+        closed). Platform service clients (svc-*) and the first-party web and
+        mobile clients are refused with 403 even with the claim. The DPoP
         proof must carry ath, the base64url SHA-256 of the access token.
   parameters:
     InteractionId:
@@ -278,9 +294,11 @@ components:
       properties:
         paymentId:
           type: string
+          minLength: 1
           description: Required to accept.
         reason:
           type: string
+          maxLength: 256
           description: >-
             Optional free text, at most 256 characters (longer is
             INVALID_REQUEST). Carried in the decision event.

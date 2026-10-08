@@ -8,7 +8,10 @@ class DomainExceptionsTest {
 
     @Test
     void exceptionsCarryTheirMessage() {
-        assertThat(new PayRequestAccessDeniedException("other TPP")).hasMessage("other TPP");
+        assertThat(new PayRequestNotFoundException(PayRequestNotFoundException.Reason.OTHER_TPP))
+                .hasMessage("Pay request not found")
+                .extracting(PayRequestNotFoundException::reason)
+                .isEqualTo(PayRequestNotFoundException.Reason.OTHER_TPP);
         assertThat(new IdempotencyKeyConflictException("reused key")).hasMessage("reused key");
         assertThat(new PayRequestFinalizedException("done")).isInstanceOf(IllegalStateException.class);
     }

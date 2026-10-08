@@ -225,8 +225,12 @@ public class OutboxRelay {
     }
 
     /**
-     * Operator parks happen in SQL (runbook); each is counted once. Runs inside the batch-read
-     * transaction while this replica holds the relay lock, so only one replica counts.
+     * Operator parks happen in SQL (runbook); each is counted at most once. Runs inside the
+     * batch-read transaction while this replica holds the relay lock, so only one replica counts.
+     * The rows are marked counted in that transaction and the counter is incremented after it
+     * commits: a crash between the two loses the increment rather than counting twice (the
+     * counter also restarts at zero with the process). outbox_parked_events_total is therefore
+     * best-effort; the gauge outbox_parked_rows, read from the table, is authoritative.
      */
     private int markOperatorParksCounted() {
         List<OutboxEventJpaEntity> uncounted = outbox.findUncountedParks();

@@ -43,8 +43,18 @@ public class PayRequestExceptionHandler {
                 .body(PayRequestErrorResponse.of("REQUEST_FINALIZED", exception.getMessage(), interactionId(request)));
     }
 
-    @ExceptionHandler({PayRequestAccessDeniedException.class, AccessDeniedException.class})
-    public ResponseEntity<PayRequestErrorResponse> handleForbidden(RuntimeException exception,
+    /** One body for an unknown pay request and another TPP's; the reason goes to the log only. */
+    @ExceptionHandler(PayRequestAccessDeniedException.class)
+    public ResponseEntity<PayRequestErrorResponse> handlePayRequestNotAccessible(PayRequestAccessDeniedException exception,
+                                                                                HttpServletRequest request) {
+        String interactionId = interactionId(request);
+        log.info("Pay request refused: reason={} interactionId={}", exception.reason(), interactionId);
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(PayRequestErrorResponse.of("FORBIDDEN", PayRequestAccessDeniedException.MESSAGE, interactionId));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleForbidden(AccessDeniedException exception,
                                                                    HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(PayRequestErrorResponse.of("FORBIDDEN", "Not allowed for this client", interactionId(request)));

@@ -10,7 +10,6 @@ import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyCo
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestAccessDeniedException;
 import com.enterprise.openfinance.requesttopay.domain.model.IdempotencyRecord;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
-import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestSettings;
@@ -115,9 +114,11 @@ class PayRequestServiceTest {
         when(cachePort.getStatus(any(), any())).thenReturn(Optional.empty());
         when(repositoryPort.findByConsentId("CONS-404")).thenReturn(Optional.empty());
 
+        // An unknown pay request is refused like another TPP's (one 403, no id probing).
         assertThatThrownBy(() -> service.getPayRequestStatus(new GetPayRequestStatusQuery("CONS-404", "TPP-001", "ix")))
-                .isInstanceOf(ResourceNotFoundException.class)
-                .hasMessageContaining("Pay request not found");
+                .isInstanceOf(PayRequestAccessDeniedException.class)
+                .hasMessage("Pay request not found or not authorised")
+                .extracting("reason").isEqualTo(PayRequestAccessDeniedException.Reason.NOT_FOUND);
     }
 
     @Test
@@ -137,7 +138,8 @@ class PayRequestServiceTest {
 
         assertThatThrownBy(() -> service.getPayRequestStatus(new GetPayRequestStatusQuery("CONS-001", "TPP-XYZ", "ix")))
                 .isInstanceOf(PayRequestAccessDeniedException.class)
-                .hasMessageContaining("participant");
+                .hasMessage("Pay request not found or not authorised")
+                .extracting("reason").isEqualTo(PayRequestAccessDeniedException.Reason.OTHER_TPP);
     }
 
     @Test
@@ -227,11 +229,13 @@ class PayRequestServiceTest {
     }
 
     @Test
-    void decisionOnUnknownRequestIsNotFoundAndPublishesNothing() {
+    void decisionOnUnknownRequestIsRefusedLikeAnotherTppsAndPublishesNothing() {
         when(repositoryPort.findByConsentIdForUpdate("CONS-404")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.acceptPayRequest("CONS-404", "TPP-001", "PAY-1", null, "ix"))
-                .isInstanceOf(ResourceNotFoundException.class);
+                .isInstanceOf(PayRequestAccessDeniedException.class)
+                .hasMessage("Pay request not found or not authorised")
+                .extracting("reason").isEqualTo(PayRequestAccessDeniedException.Reason.NOT_FOUND);
         verify(eventPublisher, never()).publish(any(), anyList(), any());
     }
 
@@ -240,7 +244,9 @@ class PayRequestServiceTest {
         when(repositoryPort.findByConsentIdForUpdate("CONS-001")).thenReturn(Optional.of(baseRequest()));
 
         assertThatThrownBy(() -> service.rejectPayRequest("CONS-001", "TPP-XYZ", null, "ix"))
-                .isInstanceOf(PayRequestAccessDeniedException.class).hasMessageContaining("participant");
+                .isInstanceOf(PayRequestAccessDeniedException.class)
+                .hasMessage("Pay request not found or not authorised")
+                .extracting("reason").isEqualTo(PayRequestAccessDeniedException.Reason.OTHER_TPP);
         verify(repositoryPort, never()).save(any());
     }
 

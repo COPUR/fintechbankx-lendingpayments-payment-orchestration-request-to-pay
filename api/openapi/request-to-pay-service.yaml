@@ -62,6 +62,11 @@ paths:
   /payment-consents/{consentId}:
     get:
       summary: Get request to pay status
+      description: >-
+        An unknown consentId and another TPP's pay request get the same 403
+        body: code FORBIDDEN, message "Pay request not found or not
+        authorised" (the reason is logged by the service only), so pay
+        request ids cannot be probed.
       operationId: getRequestToPay
       security:
         - dpopAuth: []
@@ -92,8 +97,6 @@ paths:
           $ref: '#/components/responses/DpopChallenge'
         '403':
           $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
   /payment-consents/{consentId}/accept:
     post:
       summary: Accept request to pay
@@ -104,6 +107,10 @@ paths:
         debtor's authorisation or the payment. Repeating the call with the same
         paymentId returns 201 with the current state and publishes nothing; a
         different paymentId, or a rejected request, is REQUEST_FINALIZED.
+        An unknown consentId and another TPP's pay request get the same 403
+        body: code FORBIDDEN, message "Pay request not found or not
+        authorised" (the reason is logged by the service only), so pay
+        request ids cannot be probed.
       operationId: acceptRequestToPay
       security:
         - dpopAuth: []
@@ -131,8 +138,6 @@ paths:
           $ref: '#/components/responses/DpopChallenge'
         '403':
           $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
   /payment-consents/{consentId}/reject:
@@ -142,6 +147,10 @@ paths:
         The TPP that created the request reports that the debtor declined.
         Repeating the call on a rejected request returns 200 with the current
         state and publishes nothing; a consumed request is REQUEST_FINALIZED.
+        An unknown consentId and another TPP's pay request get the same 403
+        body: code FORBIDDEN, message "Pay request not found or not
+        authorised" (the reason is logged by the service only), so pay
+        request ids cannot be probed.
       operationId: rejectRequestToPay
       security:
         - dpopAuth: []
@@ -168,8 +177,6 @@ paths:
         '401':
           $ref: '#/components/responses/DpopChallenge'
         '403':
-          $ref: '#/components/responses/Error'
-        '404':
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'

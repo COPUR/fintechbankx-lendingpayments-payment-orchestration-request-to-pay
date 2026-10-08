@@ -243,6 +243,36 @@ class RequestToPayServiceIT {
     }
 
     @Test
+    void anUnknownPayRequestAndAnotherTppsGetTheSame403Body() throws Exception {
+        String othersConsent = create("idem-probe", "10.00", "ix-probe");
+        String unknownConsent = "CONS-RTP2-does-not-exist";
+
+        for (String action : List.of("", "/accept", "/reject")) {
+            JsonNode unknown = refusedBody(action, unknownConsent);
+            JsonNode notOwned = refusedBody(action, othersConsent);
+
+            ((com.fasterxml.jackson.databind.node.ObjectNode) unknown).remove("timestamp");
+            ((com.fasterxml.jackson.databind.node.ObjectNode) notOwned).remove("timestamp");
+            assertThat(unknown).as("same code, message and fields for '%s'; only the timestamp differs", action)
+                    .isEqualTo(notOwned);
+            assertThat(unknown.get("code").asText()).isEqualTo("FORBIDDEN");
+        }
+        assertThat(jdbc.queryForObject("select status from " + SCHEMA + ".pay_request where consent_id = ?",
+                String.class, othersConsent)).isEqualTo("AWAITING_AUTHORISATION");
+    }
+
+    /** The response of TPP-OTHER reading ("") or deciding ("/accept", "/reject") {@code consentId}; must be 403. */
+    private JsonNode refusedBody(String action, String consentId) throws Exception {
+        String path = "/open-finance/v1/payment-consents/" + consentId + action;
+        MockHttpServletRequestBuilder request = action.isEmpty() ? get(path)
+                : post(path).contentType(MediaType.APPLICATION_JSON).content("{\"paymentId\": \"PAY-PROBE\"}");
+        String body = mvc.perform(request.with(dpop("TPP-OTHER")).header("X-FAPI-Interaction-ID", "ix-probe"))
+                .andExpect(status().isForbidden())
+                .andReturn().getResponse().getContentAsString();
+        return new ObjectMapper().readTree(body);
+    }
+
+    @Test
     void retryWithSameKeyReturnsTheFirstRequestAndDifferentPayloadIsAConflict() throws Exception {
         String first = create("idem-retry", "250.00", "ix-1");
 

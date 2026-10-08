@@ -267,7 +267,7 @@ class PayRequestControllerDPoPIntegrationTest {
     @Test
     void readingAnotherTppsPayRequestIsForbidden() throws Exception {
         when(payRequestUseCase.getPayRequestStatus(any()))
-                .thenThrow(new PayRequestAccessDeniedException("Pay request participant mismatch"));
+                .thenThrow(new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.OTHER_TPP));
         token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-OTHER"));
 
         mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))

@@ -95,10 +95,27 @@ class PayRequestExceptionHandlerTest {
     void shouldMapOwnershipAndClientMismatchToForbidden() {
         MockHttpServletRequest request = new MockHttpServletRequest();
 
-        assertThat(handler.handleForbidden(new PayRequestAccessDeniedException("other tpp"), request).getStatusCode())
-                .isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(handler.handlePayRequestNotAccessible(
+                new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.OTHER_TPP), request)
+                .getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(handler.handleForbidden(new AccessDeniedException("header"), request).getBody().code())
                 .isEqualTo("FORBIDDEN");
+    }
+
+    @Test
+    void unknownAndAnotherTppsPayRequestGetTheSameBody() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader("X-FAPI-Interaction-ID", "ix-probe");
+
+        ResponseEntity<PayRequestErrorResponse> unknown = handler.handlePayRequestNotAccessible(
+                new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.NOT_FOUND), request);
+        ResponseEntity<PayRequestErrorResponse> notOwned = handler.handlePayRequestNotAccessible(
+                new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.OTHER_TPP), request);
+
+        assertThat(unknown.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN).isEqualTo(notOwned.getStatusCode());
+        assertThat(unknown.getBody().code()).isEqualTo("FORBIDDEN").isEqualTo(notOwned.getBody().code());
+        assertThat(unknown.getBody().message()).isEqualTo("Pay request not found or not authorised")
+                .isEqualTo(notOwned.getBody().message());
     }
 
     @Test

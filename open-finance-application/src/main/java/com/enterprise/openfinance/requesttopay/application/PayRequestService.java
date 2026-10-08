@@ -89,7 +89,7 @@ public class PayRequestService implements PayRequestUseCase {
         }
 
         PayRequest request = repositoryPort.findByConsentId(query.consentId())
-                .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
+                .orElseThrow(PayRequestService::notFound);
 
         ensureOwnership(request, query.tppId());
 
@@ -117,7 +117,7 @@ public class PayRequestService implements PayRequestUseCase {
     private PayRequestResult decide(String consentId, String tppId, String interactionId,
                                     UnaryOperator<PayRequest> decision) {
         PayRequest request = repositoryPort.findByConsentIdForUpdate(consentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
+                .orElseThrow(PayRequestService::notFound);
         ensureOwnership(request, tppId);
 
         PayRequest decided = decision.apply(request);
@@ -144,9 +144,14 @@ public class PayRequestService implements PayRequestUseCase {
         return PayRequestResult.replayOf(original);
     }
 
+    /** An unknown id is refused exactly like another TPP's pay request, so ids cannot be probed. */
+    private static PayRequestAccessDeniedException notFound() {
+        return new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.NOT_FOUND);
+    }
+
     private static void ensureOwnership(PayRequest request, String tppId) {
         if (!request.belongsTo(tppId)) {
-            throw new PayRequestAccessDeniedException("Pay request participant mismatch");
+            throw new PayRequestAccessDeniedException(PayRequestAccessDeniedException.Reason.OTHER_TPP);
         }
     }
 

@@ -158,13 +158,28 @@ resource "aws_rds_cluster_instance" "database" {
   promotion_tier                        = count.index
 }
 
-# Application credential (role payment_request_to_pay_app, owner of schema
-# sc_pay_request_to_pay). The DBA bootstrap in the runbook creates the role and
-# writes {"username", "password"} here; Terraform never sees the value.
-# Named <env>/... because the External Secrets role may read only <env>/*.
+# Two database roles (platform review round, item 4). The runtime role
+# payment_request_to_pay_app has DML only on sc_pay_request_to_pay; the schema
+# owner payment_request_to_pay_owner runs Flyway from the pre-install/pre-upgrade
+# migration Job and is never mounted in the service pods. The DBA bootstrap in
+# the runbook creates both roles and writes {"username", "password"} into these
+# secrets; Terraform never sees the values. Names follow terraform-modules
+# aurora-postgresql (019a842): <env>/<service account>/db-app and db-migration,
+# because the External Secrets role may read only <env>/*. Neither secret is
+# tagged fintechbankx.io/value-in-state: Terraform never writes or reads their
+# values, so the PR plan role (terraform-modules f8202f0) only describes them.
 resource "aws_secretsmanager_secret" "app_database" {
   name                    = "${var.environment}/${local.service_slug}/db-app"
   description             = "Application database credential for ${local.service_id}"
+  kms_key_id              = aws_kms_key.database.arn
+  recovery_window_in_days = 7
+}
+
+# Schema owner credential, read only by the migration Job (Helm value
+# migration.remoteSecretName). aurora-postgresql migration_secret_name.
+resource "aws_secretsmanager_secret" "migration_database" {
+  name                    = "${var.environment}/${local.service_slug}/db-migration"
+  description             = "Schema owner (Flyway migration) credential for ${local.service_id}"
   kms_key_id              = aws_kms_key.database.arn
   recovery_window_in_days = 7
 }
@@ -249,16 +264,27 @@ resource "aws_cloudwatch_metric_alarm" "aurora_capacity" {
   ok_actions          = var.alarm_topic_arn == "" ? [] : [var.alarm_topic_arn]
 }
 
+# Connection budget: every replica at full pool (HPA maxReplicas x DB_POOL_MAX,
+# 12 x 10 = 120 by default) plus headroom for the migration Job, the backfill
+# and DBA sessions. The alarm fires only above that budget, i.e. on a
+# connection leak or an unexpected client, not under normal peak load. Keep
+# the variables in step with the Helm values (autoscaling.maxReplicas,
+# config.DB_POOL_MAX), and keep the budget below Aurora's max_connections at
+# aurora_min_capacity (Serverless v2 sizes it from capacity).
+locals {
+  db_connection_budget = var.service_max_replicas * var.db_pool_max + var.db_connection_headroom
+}
+
 resource "aws_cloudwatch_metric_alarm" "aurora_connections" {
   alarm_name          = "${local.name}-aurora-connections-high"
-  alarm_description   = "Connections near the pool budget (HPA max replicas x DB_POOL_MAX)."
+  alarm_description   = "Connections above the pool budget (${var.service_max_replicas} replicas x ${var.db_pool_max} + ${var.db_connection_headroom}): leak or unexpected client."
   namespace           = "AWS/RDS"
   metric_name         = "DatabaseConnections"
   dimensions          = { DBClusterIdentifier = aws_rds_cluster.database.cluster_identifier }
   statistic           = "Maximum"
   period              = 300
   evaluation_periods  = 2
-  threshold           = 100
+  threshold           = local.db_connection_budget
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
   alarm_actions       = var.alarm_topic_arn == "" ? [] : [var.alarm_topic_arn]

@@ -132,3 +132,36 @@ variable "tags" {
   description = "Additional tags (cost centre, data classification)."
   default     = {}
 }
+
+variable "service_max_replicas" {
+  type        = number
+  description = "HPA maxReplicas of the Helm release (autoscaling.maxReplicas); sizes the DB connection alarm."
+  default     = 12
+
+  validation {
+    condition     = var.service_max_replicas >= 1
+    error_message = "service_max_replicas must be at least 1."
+  }
+}
+
+variable "db_pool_max" {
+  type        = number
+  description = "Hikari maximum pool size per pod (Helm config.DB_POOL_MAX); sizes the DB connection alarm."
+  default     = 10
+
+  validation {
+    condition     = var.db_pool_max >= 1
+    error_message = "db_pool_max must be at least 1."
+  }
+}
+
+variable "db_connection_headroom" {
+  type        = number
+  description = "Connections allowed beyond the pods' pools (migration Job, backfill, DBA sessions) before the alarm fires."
+  default     = 10
+
+  validation {
+    condition     = var.db_connection_headroom >= 0
+    error_message = "db_connection_headroom cannot be negative."
+  }
+}

@@ -4,8 +4,8 @@ output "workload_role_arn" {
 }
 
 output "jdbc_url" {
-  description = "Helm value config.DB_URL."
-  value       = "jdbc:postgresql://${aws_rds_cluster.database.endpoint}:5432/${local.database}?sslmode=require"
+  description = "Helm value config.DB_URL. verify-full against the RDS CA bundle the chart mounts from ConfigMap rds-ca-bundle (platform trust-manager)."
+  value       = "jdbc:postgresql://${aws_rds_cluster.database.endpoint}:5432/${local.database}?sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem"
 }
 
 output "reader_endpoint" {
@@ -16,6 +16,11 @@ output "reader_endpoint" {
 output "app_db_secret_name" {
   description = "Helm value externalSecret.remoteSecretName."
   value       = aws_secretsmanager_secret.app_database.name
+}
+
+output "migration_db_secret_name" {
+  description = "Helm value migration.remoteSecretName (schema owner, read only by the migration Job)."
+  value       = aws_secretsmanager_secret.migration_database.name
 }
 
 output "master_user_secret_arn" {

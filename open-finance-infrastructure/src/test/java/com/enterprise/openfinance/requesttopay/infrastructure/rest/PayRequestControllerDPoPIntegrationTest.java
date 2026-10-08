@@ -167,6 +167,56 @@ class PayRequestControllerDPoPIntegrationTest {
     }
 
     @Test
+    void tokenWithTheAudienceButWithoutThePaymentsScopeIsForbidden() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001", "accounts openid", java.util.Map.of()));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void tokenWithoutAnyScopeIsForbidden() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001", null, java.util.Map.of()));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void serviceClientTokenIsForbiddenEvenWithTheScope() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "svc-pay-bulk-orchestration"));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void firstPartyChannelTokenIsForbidden() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "fintechbankx-mobile"));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void clientTypeClaimOtherThanOpenFinanceTppIsForbidden() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001", "payments",
+                java.util.Map.of("fbx_client_type", "first-party-public")));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void clientTypeClaimOfATppIsServed() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001", "payments",
+                java.util.Map.of("fbx_client_type", "open-finance-tpp")));
+
+        mockMvc.perform(withProof(get(STATUS_PATH).header("Authorization", "DPoP token"), STATUS_PATH))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void readingAnotherTppsPayRequestIsForbidden() throws Exception {
         when(payRequestUseCase.getPayRequestStatus(any()))
                 .thenThrow(new PayRequestAccessDeniedException("Pay request participant mismatch"));

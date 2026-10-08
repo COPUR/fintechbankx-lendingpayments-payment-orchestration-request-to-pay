@@ -6,6 +6,8 @@ import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPProof
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPRequestVerifier;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationService;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DpopAwareBearerTokenResolver;
+import com.enterprise.openfinance.requesttopay.infrastructure.security.TppClientPolicy;
+import org.springframework.security.authorization.AuthorizationDecision;
 import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -38,7 +40,8 @@ import java.util.Map;
  * Stateless OAuth2 resource server for the platform Keycloak realm.
  * Every endpoint is TPP-facing (/open-finance/v1, monolith paths) and needs a
  * DPoP-bound token: {@code Authorization: DPoP}, a valid proof with a unique jti,
- * {@code cnf.jkt} matching the proof key, and this service in {@code aud}.
+ * {@code cnf.jkt} matching the proof key, this service in {@code aud}, the
+ * payments scope, and a TPP as the calling client ({@link TppClientPolicy}).
  * There is no internal /api/v1 surface: no caller exists.
  * Everything outside those paths and the actuator probes is denied.
  */
@@ -55,9 +58,26 @@ public class SecurityConfig {
     @Value("${spring.security.oauth2.resourceserver.jwt.expected-audience}")
     private String expectedAudience;
 
+    @Value("${requesttopay.security.tpp.required-scope:payments}")
+    private String requiredScope;
+
+    @Value("${requesttopay.security.tpp.denied-client-prefixes:svc-}")
+    private List<String> deniedClientPrefixes;
+
+    @Value("${requesttopay.security.tpp.denied-client-ids:fintechbankx-web,fintechbankx-mobile}")
+    private List<String> deniedClientIds;
+
+    @Value("${requesttopay.security.tpp.client-type-claim:fbx_client_type}")
+    private String clientTypeClaim;
+
+    @Value("${requesttopay.security.tpp.client-type:open-finance-tpp}")
+    private String tppClientType;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, DPoPValidationService dpopValidationService)
             throws Exception {
+        TppClientPolicy tppPolicy = new TppClientPolicy(requiredScope, deniedClientPrefixes, deniedClientIds,
+                clientTypeClaim, tppClientType);
         http
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -66,7 +86,8 @@ public class SecurityConfig {
                 // already passed this chain; denying them would turn a 404/405 into 401/403.
                 .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                 .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
-                .requestMatchers("/open-finance/v1/par", "/open-finance/v1/payment-consents/**").authenticated()
+                .requestMatchers("/open-finance/v1/par", "/open-finance/v1/payment-consents/**")
+                    .access((authentication, context) -> new AuthorizationDecision(tppPolicy.allows(authentication.get())))
                 .anyRequest().denyAll()
             )
             .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint(new DPoPChallenge()))

@@ -42,17 +42,26 @@ public class DPoPTestUtils {
 
     /** A DPoP-bound token for {@code azp}; {@code azp == null} gives a token without client identity. */
     public static Jwt createJwtWithCnf(ECKey key, String azp) throws Exception {
+        return createJwtWithCnf(key, azp, "payments", Map.of());
+    }
+
+    /** A DPoP-bound token for {@code azp} with the given scope and extra claims. */
+    public static Jwt createJwtWithCnf(ECKey key, String azp, String scope, Map<String, Object> claims)
+            throws Exception {
         String jkt = key.computeThumbprint("SHA-256").toString();
         Map<String, Object> cnf = Collections.singletonMap("jkt", jkt);
 
         Jwt.Builder token = Jwt.withTokenValue("token")
                 .header("alg", "ES256")
                 .claim("sub", "user")
-                .claim("scope", "payments")
                 .claim("cnf", cnf);
+        if (scope != null) {
+            token.claim("scope", scope);
+        }
         if (azp != null) {
             token.claim("azp", azp);
         }
+        claims.forEach(token::claim);
         return token.build();
     }
 }

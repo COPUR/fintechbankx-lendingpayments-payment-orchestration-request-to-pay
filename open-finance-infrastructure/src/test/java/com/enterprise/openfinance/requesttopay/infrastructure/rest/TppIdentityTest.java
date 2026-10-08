@@ -47,9 +47,17 @@ class TppIdentityTest {
     }
 
     @Test
-    void withoutAuthenticationTheHeaderOrUnknownIsUsed() {
-        assertThat(TppIdentity.resolve("TPP-003")).isEqualTo("TPP-003");
-        assertThat(TppIdentity.resolve(null)).isEqualTo(TppIdentity.UNKNOWN_TPP);
+    void withoutAnAccessTokenNothingIsResolvedFromTheHeader() {
+        assertThatThrownBy(() -> TppIdentity.resolve("TPP-003")).isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> TppIdentity.resolve(null)).isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void anotherAuthenticationTypeIsRefused() {
+        SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.authentication.TestingAuthenticationToken("TPP-003", "n/a"));
+
+        assertThatThrownBy(() -> TppIdentity.resolve("TPP-003")).isInstanceOf(AccessDeniedException.class);
     }
 
     private static void authenticate(Jwt jwt) {

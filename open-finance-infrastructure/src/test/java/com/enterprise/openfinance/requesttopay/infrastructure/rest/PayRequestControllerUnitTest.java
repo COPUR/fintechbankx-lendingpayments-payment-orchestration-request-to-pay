@@ -10,7 +10,12 @@ import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayReques
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestRequest;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestResponse;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestStatusResponse;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.mockito.ArgumentCaptor;
@@ -28,6 +33,17 @@ class PayRequestControllerUnitTest {
 
     private final PayRequestUseCase useCase = Mockito.mock(PayRequestUseCase.class);
     private final PayRequestController controller = new PayRequestController(useCase);
+
+    @BeforeEach
+    void authenticateAsTpp001() {
+        SecurityContextHolder.getContext().setAuthentication(new JwtAuthenticationToken(
+                Jwt.withTokenValue("t").header("alg", "PS256").claim("azp", "TPP-001").build()));
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        SecurityContextHolder.clearContext();
+    }
 
     @Test
     void shouldCreateAndReturnPayRequest() {
@@ -107,7 +123,7 @@ class PayRequestControllerUnitTest {
     }
 
     @Test
-    void shouldUseUnknownTppWhenFinancialIdMissing() {
+    void tppComesFromTheTokenWhenFinancialIdIsMissing() {
         PayRequest request = sampleRequest(PayRequestStatus.AWAITING_AUTHORISATION, null);
         Mockito.when(useCase.getPayRequestStatus(Mockito.any()))
                 .thenReturn(new PayRequestResult(request, false));
@@ -121,7 +137,17 @@ class PayRequestControllerUnitTest {
 
         ArgumentCaptor<GetPayRequestStatusQuery> captor = ArgumentCaptor.forClass(GetPayRequestStatusQuery.class);
         verify(useCase).getPayRequestStatus(captor.capture());
-        assertThat(captor.getValue().tppId()).isEqualTo("UNKNOWN_TPP");
+        assertThat(captor.getValue().tppId()).isEqualTo("TPP-001");
+    }
+
+    @Test
+    void withoutAnAccessTokenTheCallIsRefusedEvenWithAFinancialId() {
+        SecurityContextHolder.clearContext();
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> controller.getPayRequestStatus(
+                        "ix-request-to-pay-5", "TPP-001", "CONS-001", null))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        Mockito.verifyNoInteractions(useCase);
     }
 
     @Test

@@ -470,7 +470,7 @@ class RequestToPayServiceIT {
     private static Jwt boundToken(String tppId) {
         try {
             return Jwt.withTokenValue(tppId).header("alg", "PS256").subject("tpp-user")
-                    .claim("azp", tppId).audience(List.of("svc-pay-request-to-pay"))
+                    .claim("azp", tppId).claim("scope", "payments").audience(List.of("svc-pay-request-to-pay"))
                     .claim("cnf", Map.of("jkt", TPP_KEY.computeThumbprint("SHA-256").toString()))
                     .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(300)).build();
         } catch (Exception e) {

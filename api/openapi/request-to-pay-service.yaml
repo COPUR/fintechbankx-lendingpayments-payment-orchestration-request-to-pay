@@ -165,7 +165,10 @@ components:
       description: >-
         Authorization: DPoP <access token> from the fintechbankx realm, with
         cnf.jkt bound to the key of the DPoP proof header; aud must contain
-        svc-pay-request-to-pay.
+        svc-pay-request-to-pay and scope must contain payments. The calling
+        client (azp) must be a TPP: platform service clients (svc-*) and the
+        first-party web and mobile clients are refused with 403. The DPoP
+        proof must carry ath, the base64url SHA-256 of the access token.
   parameters:
     InteractionId:
       name: x-fapi-interaction-id

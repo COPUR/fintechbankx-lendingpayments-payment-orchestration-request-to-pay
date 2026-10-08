@@ -18,7 +18,13 @@ import java.util.UUID;
 
 public class DPoPTestUtils {
 
+    /** A proof for the test access token "token" (the value createJwtWithCnf issues). */
     public static String createDPoPProof(ECKey key, HttpMethod method, String url) throws Exception {
+        return createDPoPProof(key, method, url, "token");
+    }
+
+    public static String createDPoPProof(ECKey key, HttpMethod method, String url, String accessToken)
+            throws Exception {
         JWSHeader header = new JWSHeader.Builder(JWSAlgorithm.ES256)
                 .type(new JOSEObjectType(com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationService.DPOP_JWT_TYPE))
                 .jwk(key.toPublicJWK())
@@ -29,6 +35,8 @@ public class DPoPTestUtils {
                 .issueTime(Date.from(Instant.now()))
                 .claim("htm", method.name())
                 .claim("htu", url)
+                .claim("ath", com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationService
+                        .accessTokenHash(accessToken))
                 .build();
 
         SignedJWT signedJWT = new SignedJWT(header, claims);

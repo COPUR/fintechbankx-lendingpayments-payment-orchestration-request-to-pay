@@ -141,6 +141,17 @@ class PayRequestControllerDPoPIntegrationTest {
     }
 
     @Test
+    void proofBoundToAnotherAccessTokenIsUnauthorized() throws Exception {
+        token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
+        String proof = DPoPTestUtils.createDPoPProof(dpopKey, HttpMethod.GET, "http://localhost" + STATUS_PATH,
+                "a-different-access-token");
+
+        mockMvc.perform(get(STATUS_PATH).header("Authorization", "DPoP token").header("DPoP", proof)
+                        .header("X-FAPI-Interaction-ID", "interaction-123"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void replayedProofIsUnauthorized() throws Exception {
         token(DPoPTestUtils.createJwtWithCnf(dpopKey, "TPP-001"));
         when(dpopNonceRepository.saveJtiIfAbsent(anyString(), anyLong())).thenReturn(false);
@@ -289,5 +300,9 @@ class PayRequestControllerDPoPIntegrationTest {
             SecurityConfig.class
     })
     static class TestApplication {
+        @org.springframework.context.annotation.Bean
+        java.time.Clock clock() {
+            return java.time.Clock.systemUTC();
+        }
     }
 }

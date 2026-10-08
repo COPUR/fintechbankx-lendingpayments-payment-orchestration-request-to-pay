@@ -18,7 +18,8 @@ import java.util.Map;
  * <ul>
  *   <li>the {@code Authorization: DPoP <token>} scheme (Bearer is refused);</li>
  *   <li>a DPoP proof header, validated for signature with the embedded JWK,
- *       typ, alg, htm, htu, iat window and jti replay;</li>
+ *       typ, alg, htm, htu, iat window, ath (hash of this access token) and
+ *       jti replay;</li>
  *   <li>an access token whose {@code cnf.jkt} equals the proof key's thumbprint.</li>
  * </ul>
  * The token's {@code aud} is checked by the JWT decoder.
@@ -55,7 +56,7 @@ public class DPoPRequestVerifier {
         String boundThumbprint = boundThumbprint(authentication);
 
         JWK proofKey = validationService.validateDPoPProof(proof, HttpMethod.valueOf(request.getMethod()),
-                requestUri(request));
+                requestUri(request), accessToken(authentication));
         if (boundThumbprint == null) {
             throw new DPoPValidationException("Access token 'cnf' claim with 'jkt' is missing");
         }
@@ -75,6 +76,11 @@ public class DPoPRequestVerifier {
             return jkt;
         }
         return null;
+    }
+
+    /** The token the proof accompanies; its SHA-256 must be the proof's ath. */
+    private static String accessToken(Authentication authentication) {
+        return authentication instanceof JwtAuthenticationToken jwt ? jwt.getToken().getTokenValue() : null;
     }
 
     private static String thumbprint(JWK key) {

@@ -37,7 +37,7 @@ class DPoPValidationServiceRejectionTest {
         when(nonces.saveJtiIfAbsent(anyString(), anyLong())).thenReturn(true);
         String proof = proof(new ECKeyGenerator(Curve.P_256).generate(), "dpop+jwt", Instant.now().minusSeconds(600));
 
-        assertThatThrownBy(() -> service.validateDPoPProof(proof, HttpMethod.GET, URL))
+        assertThatThrownBy(() -> service.validateDPoPProof(proof, HttpMethod.GET, URL, "token"))
                 .isInstanceOf(DPoPValidationException.class).hasMessageContaining("too old");
     }
 
@@ -46,7 +46,7 @@ class DPoPValidationServiceRejectionTest {
         when(nonces.saveJtiIfAbsent(anyString(), anyLong())).thenReturn(true);
         String proof = proof(new ECKeyGenerator(Curve.P_256).generate(), "dpop+jwt", Instant.now().plusSeconds(600));
 
-        assertThatThrownBy(() -> service.validateDPoPProof(proof, HttpMethod.GET, URL))
+        assertThatThrownBy(() -> service.validateDPoPProof(proof, HttpMethod.GET, URL, "token"))
                 .isInstanceOf(DPoPValidationException.class).hasMessageContaining("future");
     }
 
@@ -54,7 +54,7 @@ class DPoPValidationServiceRejectionTest {
     void wrongTypIsRejected() throws Exception {
         String proof = proof(new ECKeyGenerator(Curve.P_256).generate(), "JWT", Instant.now());
 
-        assertThatThrownBy(() -> service.validateDPoPProof(proof, HttpMethod.GET, URL))
+        assertThatThrownBy(() -> service.validateDPoPProof(proof, HttpMethod.GET, URL, "token"))
                 .isInstanceOf(DPoPValidationException.class).hasMessageContaining("typ");
     }
 
@@ -64,7 +64,7 @@ class DPoPValidationServiceRejectionTest {
                 .type(new JOSEObjectType("dpop+jwt")).build(), claims(Instant.now()));
         jwt.sign(new MACSigner("0123456789abcdef0123456789abcdef"));
 
-        assertThatThrownBy(() -> service.validateDPoPProof(jwt.serialize(), HttpMethod.GET, URL))
+        assertThatThrownBy(() -> service.validateDPoPProof(jwt.serialize(), HttpMethod.GET, URL, "token"))
                 .isInstanceOf(DPoPValidationException.class).hasMessageContaining("algorithm");
     }
 
@@ -76,13 +76,13 @@ class DPoPValidationServiceRejectionTest {
                 .type(new JOSEObjectType("dpop+jwt")).jwk(embedded.toPublicJWK()).build(), claims(Instant.now()));
         jwt.sign(new ECDSASigner(signer));
 
-        assertThatThrownBy(() -> service.validateDPoPProof(jwt.serialize(), HttpMethod.GET, URL))
+        assertThatThrownBy(() -> service.validateDPoPProof(jwt.serialize(), HttpMethod.GET, URL, "token"))
                 .isInstanceOf(DPoPValidationException.class).hasMessageContaining("signature");
     }
 
     @Test
     void garbageIsRejected() {
-        assertThatThrownBy(() -> service.validateDPoPProof("not-a-jwt", HttpMethod.GET, URL))
+        assertThatThrownBy(() -> service.validateDPoPProof("not-a-jwt", HttpMethod.GET, URL, "token"))
                 .isInstanceOf(DPoPValidationException.class).hasMessageContaining("format");
     }
 
@@ -95,6 +95,6 @@ class DPoPValidationServiceRejectionTest {
 
     private static JWTClaimsSet claims(Instant iat) {
         return new JWTClaimsSet.Builder().jwtID(UUID.randomUUID().toString()).issueTime(Date.from(iat))
-                .claim("htm", "GET").claim("htu", URL.toString()).build();
+                .claim("htm", "GET").claim("ath", DPoPValidationService.accessTokenHash("token")).claim("htu", URL.toString()).build();
     }
 }

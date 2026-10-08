@@ -9,6 +9,7 @@ import com.enterprise.openfinance.requesttopay.infrastructure.outbox.OutboxRelay
 import com.enterprise.openfinance.requesttopay.infrastructure.outbox.PostgresSessionRelayLock;
 import com.enterprise.openfinance.requesttopay.infrastructure.outbox.RelayLock;
 import com.enterprise.openfinance.requesttopay.infrastructure.outbox.SpringDataOutboxRepository;
+import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationService;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.JdbcDPoPNonceRepository;
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
@@ -376,7 +377,7 @@ class RequestToPayServiceIT {
     void aReplayedProofIsUnauthorized() throws Exception {
         String consentId = create("idem-replay-proof", "5.00", "ix-rp");
         String url = "http://localhost/open-finance/v1/payment-consents/" + consentId;
-        String proof = proof("GET", url);
+        String proof = proof("GET", url, "TPP-001");
 
         mvc.perform(get("/open-finance/v1/payment-consents/{id}", consentId).header("X-FAPI-Interaction-ID", "ix-rp1")
                         .header("Authorization", "DPoP TPP-001").header("DPoP", proof))
@@ -448,18 +449,20 @@ class RequestToPayServiceIT {
     private static RequestPostProcessor dpop(String tppId) {
         return request -> {
             request.addHeader("Authorization", "DPoP " + tppId);
-            request.addHeader("DPoP", proof(request.getMethod(), request.getRequestURL().toString()));
+            request.addHeader("DPoP", proof(request.getMethod(), request.getRequestURL().toString(), tppId));
             return request;
         };
     }
 
-    private static String proof(String method, String url) {
+    /** A proof for {@code accessToken} (ath), the token value the mocked decoder turns into a bound token. */
+    private static String proof(String method, String url, String accessToken) {
         try {
             SignedJWT proof = new SignedJWT(
                     new JWSHeader.Builder(JWSAlgorithm.ES256).type(new JOSEObjectType("dpop+jwt"))
                             .jwk(TPP_KEY.toPublicJWK()).build(),
                     new JWTClaimsSet.Builder().jwtID(UUID.randomUUID().toString()).issueTime(new Date())
-                            .claim("htm", method).claim("htu", url).build());
+                            .claim("htm", method).claim("htu", url)
+                            .claim("ath", DPoPValidationService.accessTokenHash(accessToken)).build());
             proof.sign(new ECDSASigner(TPP_KEY));
             return proof.serialize();
         } catch (Exception e) {

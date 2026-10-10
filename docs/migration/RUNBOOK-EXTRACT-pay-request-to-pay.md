@@ -172,7 +172,10 @@ owners' agreement.
    (any increase of `outbox_parked_events_total` over 15 minutes, per `exception`, severity warning, routed by
    squad; `exception` is the payload error class or `OperatorPark`). The platform outbox rules also cover a
    stalled relay (`OutboxRelayStalled`, oldest pending event above 900 s) and send failures
-   (`OutboxSendFailures`). Service-specific asks beyond those, for the observability team:
+   (`OutboxSendFailures`). Every meter carries the common tags `service=svc-pay-request-to-pay`,
+   `app=payment-request-to-pay-service` (service account) and `squad=payments` (release namespace); the chart sets
+   the last two through `METRICS_TAG_APP` and `METRICS_TAG_SQUAD` (recurring-mandates 2ad4e7f).
+   Service-specific asks beyond those, for the observability team:
    - `outbox_parked_rows` above 0 (the authoritative signal: the gauge is read from the table, while the counter is
      best-effort, see section 5)
    - `outbox_oldest_pending_age_seconds` above 300 for 10 minutes (stricter than the platform's 900 s; only

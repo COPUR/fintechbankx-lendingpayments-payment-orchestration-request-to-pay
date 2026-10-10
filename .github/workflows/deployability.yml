@@ -128,6 +128,9 @@ jobs:
           grep -q 'sidecar.istio.io/inject: "true"' <<<"$job"
           grep -q 'terminationGracePeriodSeconds: 65' <<<"$deployment"
           test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
+          # Micrometer common tags (recurring-mandates 2ad4e7f): squad = the release namespace, app = the service account.
+          grep -q 'METRICS_TAG_SQUAD: "payments"' <<<"$rendered"
+          grep -q "METRICS_TAG_APP: \"$sa\"" <<<"$rendered"
           strimzi="$(helm template ci "$chart" "${args[@]}" --set kafka.profile=kafka-strimzi --show-only templates/deployment.yaml)"
           grep -A4 'name: KAFKA_TLS_CA' <<<"$strimzi" | grep -q 'name: fintechbankx-cluster-ca-cert'
 

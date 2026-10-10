@@ -22,3 +22,8 @@ data:
   {{ $key }}: {{ $value | quote }}
   {{- end }}
   {{- end }}
+  # Micrometer common tags (platform convention, recurring-mandates 2ad4e7f):
+  # app = service account, squad = release namespace (the platform outbox
+  # alerts route on it).
+  METRICS_TAG_APP: {{ .Values.serviceAccount.name | quote }}
+  METRICS_TAG_SQUAD: {{ .Release.Namespace | quote }}

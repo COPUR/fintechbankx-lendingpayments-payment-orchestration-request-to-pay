@@ -111,8 +111,6 @@ components:
       $ref: ./common/event-envelope.yaml#/EventEnvelope
     EventHeaders:
       $ref: ./common/event-envelope.yaml#/EventHeaders
-    DeadLetterHeaders:
-      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
     MonetaryAmount:
       $ref: ./common/event-envelope.yaml#/MonetaryAmount
     DecimalAmount:
@@ -239,13 +237,15 @@ components:
         kafka:
           key:
             type: string
-            description: aggregateId (consentId of the pay request).
+            description: aggregateId, the pay request id (Data.ConsentId on the TPP API; local to evt.pay.rtp, not a
+              consent-authorization consent).
           bindingVersion: 0.5.0
       x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestCreatedEvent
     PayRequestAccepted:
       name: PayRequestAccepted
       title: Payments.PayRequest.Accepted.v1
-      summary: The debtor accepted the request and a payment was created (request status CONSUMED).
+      summary: The requesting TPP reported acceptance with paymentId X (request status CONSUMED); not verified by this
+        service.
       contentType: application/json
       headers:
         allOf:
@@ -269,13 +269,14 @@ components:
         kafka:
           key:
             type: string
-            description: aggregateId (consentId of the pay request).
+            description: aggregateId, the pay request id (Data.ConsentId on the TPP API; local to evt.pay.rtp, not a
+              consent-authorization consent).
           bindingVersion: 0.5.0
       x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestAcceptedEvent
     PayRequestRejected:
       name: PayRequestRejected
       title: Payments.PayRequest.Rejected.v1
-      summary: The debtor rejected the request.
+      summary: The requesting TPP reported that the debtor declined the request.
       contentType: application/json
       headers:
         allOf:
@@ -299,24 +300,10 @@ components:
         kafka:
           key:
             type: string
-            description: aggregateId (consentId of the pay request).
+            description: aggregateId, the pay request id (Data.ConsentId on the TPP API; local to evt.pay.rtp, not a
+              consent-authorization consent).
           bindingVersion: 0.5.0
       x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestRejectedEvent
-    DeadLetter:
-      name: DeadLetter
-      title: Dead letter for evt.pay.rtp
-      summary: A message from this namespace that a consumer could not process after bounded retries.
-      contentType: application/json
-      headers:
-        $ref: '#/components/schemas/DeadLetterHeaders'
-      payload:
-        $ref: '#/components/schemas/EventEnvelope'
-      bindings:
-        kafka:
-          key:
-            type: string
-            description: Original record key (aggregateId).
-          bindingVersion: 0.5.0
   securitySchemes:
     mskIam:
       type: userPassword

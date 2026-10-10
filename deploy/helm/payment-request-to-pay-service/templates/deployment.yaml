@@ -77,8 +77,9 @@ spec:
             - name: http-management
               containerPort: 8081
           env:
+            # Exactly kafka-msk or kafka-strimzi (rtp.kafkaProfile); the local profile is never deployed.
             - name: SPRING_PROFILES_ACTIVE
-              value: {{ .Values.kafka.profile | quote }}
+              value: {{ include "rtp.kafkaProfile" . | quote }}
             # Migrations run only in the pre-install/pre-upgrade Job as the
             # schema owner; the pods hold the runtime role and never migrate.
             - name: SPRING_FLYWAY_ENABLED

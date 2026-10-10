@@ -65,29 +65,82 @@ jobs:
             fi
           done
 
+          # Guardrail 4a, chart layer. The platform rules are a vendored copy of cicd-templates 2caa48f
+          # (charts/fintechbankx-service/templates/_helpers.tpl:70-239) in templates/_fbx-guard.tpl, pinned
+          # by sha256 (README "Startup TLS assertion"); this chart's additions are in templates/_helpers.tpl.
+          echo "82ea4815d60ea1a6b9393ee1ee7a0df1ac72f3671d67e88c1ddc74b0759dfd4f  $chart/templates/_fbx-guard.tpl" | sha256sum -c
+
           # Aurora TLS (cicd-templates 4f0f266): bundle mounted at /etc/fintechbankx/rds-ca, exported as
           # DB_SSL_ROOT_CERT in the pods and the migration Job; DB_URL must verify-full against it.
+          ca=/etc/fintechbankx/rds-ca/global-bundle.pem
           test "$(grep -c 'name: DB_SSL_ROOT_CERT' <<<"$rendered")" -eq 2
-          grep -A1 'name: DB_SSL_ROOT_CERT' <<<"$rendered" | grep -q 'value: "/etc/fintechbankx/rds-ca/global-bundle.pem"'
+          grep -A1 'name: DB_SSL_ROOT_CERT' <<<"$rendered" | grep -q "value: \"$ca\""
           grep -q 'mountPath: /etc/fintechbankx/rds-ca' <<<"$rendered"
+          # DB_URL is parsed the way PgJDBC reads it (fbx.validateJdbcUrl), not searched for a substring:
+          # exactly one lower-case sslmode=verify-full, exactly one sslrootcert equal to the mounted bundle,
+          # no verification-bypass parameter, no percent-encoded '=' or '&', no TLS key before the '?'.
           for url in 'jdbc:postgresql://db.ci:5432/db?sslmode=require' \
-                     'jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem'; do
+                     'jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem' \
+                     'jdbc:postgresql://db.ci:5432/db?sslmode=verify-full' \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=$ca&sslmode=disable" \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=/tmp/decoy.pem&sslrootcert=$ca" \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=$ca&sslfactory=org.postgresql.ssl.NonValidatingFactory" \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=$ca&sslfactoryarg=x" \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=$ca&sslhostnameverifier=x.Y" \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=$ca&sslpasswordcallback=x.Y" \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=$ca&service=rtp" \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode=require&applicationName=sslmode=verify-full&sslrootcert=$ca" \
+                     "jdbc:postgresql://db.ci:5432/db?SSLMODE=verify-full&sslrootcert=$ca" \
+                     "jdbc:postgresql://db.ci:5432/db?sslmode%3Dverify-full&sslrootcert=$ca" \
+                     "jdbc:postgresql://sslmode=disable@db.ci:5432/db?sslmode=verify-full&sslrootcert=$ca"; do
             if helm template ci "$chart" "${args[@]}" --set-string "config.DB_URL=$url" > /dev/null 2>&1; then
               echo "chart rendered DB_URL $url" >&2; exit 1
             fi
           done
-          # Governance round 3 (2b): no value may redirect Spring's configuration (a configtree is only
-          # ever the chart's own optional:configtree:/etc/fintechbankx/config/), replace the database
-          # URL behind the verify-full check, or switch the startup TLS assertion off, whatever the
-          # case of the key (rtp.guardEnvKeys).
+          # Governance round 3 (2b), rounds 5 and 6: no config key may redirect Spring's configuration,
+          # activate a profile in the image (application-local.yml switches the TLS assertion off), replace
+          # the database URL behind the verify-full check, change the Kafka protocol or switch the assertion
+          # off, in any spelling Spring's relaxed binding reads, indexed forms included
+          # (fbx.datasourceOverrideName + rtp.guardConfigName).
           for key in SPRING_CONFIG_IMPORT spring_config_import Spring_Config_Location SPRING_CONFIG_ADDITIONAL_LOCATION \
-                     SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_FLYWAY_URL FINTECHBANKX_TLS_ENFORCE; do
-            if helm template ci "$chart" "${args[@]}" --set-string "config.$key=x" > /dev/null 2>&1; then
+                     SPRING_CONFIG_IMPORT_0 SPRING_CONFIG_IMPORT_0_ SPRING_CONFIG_LOCATION_0 SPRING_CONFIG_ADDITIONAL_LOCATION_0 \
+                     SPRING_CONFIG_NAME spring.config.import spring-config-import \
+                     SPRING_PROFILES_ACTIVE SPRING_PROFILES_ACTIVE_0 SPRING_PROFILES_INCLUDE SPRING_PROFILES_INCLUDE_0 \
+                     SPRING_PROFILES_DEFAULT SPRING_PROFILES_GROUP_KAFKA_MSK SPRING_PROFILES_GROUP_KAFKA_MSK_0 spring.profiles.group.kafka-msk \
+                     SPRING_APPLICATION_JSON spring.application.json \
+                     SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_DATASOURCE_HIKARI_JDBCURL spring.datasource.hikari.jdbc-url \
+                     SPRING_FLYWAY_URL SPRING_FLYWAY_LOCATIONS SPRING_LIQUIBASE_URL SPRING_R2DBC_URL MY_JDBC_URL X_SSLFACTORY \
+                     FINTECHBANKX_TLS_ENFORCE FINTECHBANKX_TLS_ENFORCE_0 fintechbankx.tls.enforce fintechbankx-tls-enforce FINTECHBANKXTLS_ENFORCE \
+                     SPRING_KAFKA_SECURITY_PROTOCOL SPRING_KAFKA_PRODUCER_SECURITY_PROTOCOL SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL \
+                     SPRING_KAFKA_PROPERTIES_SSL_TRUSTSTORE_LOCATION; do
+            if helm template ci "$chart" "${args[@]}" --set-string "config.${key//./\\.}=x" > /dev/null 2>&1; then
               echo "chart rendered with config.$key" >&2; exit 1
             fi
           done
-          if ! helm template ci "$chart" "${args[@]}" --set-string config.DB_POOL_MIN_IDLE=2 > /dev/null; then
-            echo "the env-key guard rejected an ordinary config key" >&2; exit 1
+          # JVM options need a literal value that names none of the routes above (fbx.validateJvmOptions,
+          # extended with fintechbankx and kafka); the entrypoint reads no JAVA_OPTS.
+          for name in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS; do
+            for opt in '-Dfintechbankx.tls.enforce=false' '-Dspring.datasource.url=jdbc:postgresql://db.ci:5432/db' \
+                       '-Dspring.profiles.default=local' '-Dspring.config.import[0]=file:/tmp/x.yml' \
+                       '-Dspring.kafka.security.protocol=PLAINTEXT' '-Djavax.net.ssl.trustStore=/tmp/x' \
+                       '@/tmp/opts' '-XX:VMOptionsFile=/tmp/opts' '-XX:+UseG1GC -Dspring.application.json=x'; do
+              if helm template ci "$chart" "${args[@]}" --set-string "config.$name=$opt" > /dev/null 2>&1; then
+                echo "chart rendered with config.$name=$opt" >&2; exit 1
+              fi
+            done
+          done
+          # The profile the chart activates is exactly kafka-msk or kafka-strimzi (rtp.kafkaProfile): no local,
+          # no list, no empty value. The Kafka protocol default must be a TLS one, and extraEnv does not exist
+          # (Kubernetes env would win over the ConfigMap).
+          for wrong in "--set kafka.profile=local" "--set-string kafka.profile=kafka-msk\,local" "--set kafka.profile=" \
+                       "--set config.KAFKA_SECURITY_PROTOCOL=PLAINTEXT" "--set extraEnv[0].name=DB_URL --set extraEnv[0].value=x"; do
+            if helm template ci "$chart" "${args[@]}" $wrong > /dev/null 2>&1; then
+              echo "chart rendered with $wrong" >&2; exit 1
+            fi
+          done
+          if ! helm template ci "$chart" "${args[@]}" --set-string config.DB_POOL_MIN_IDLE=2 \
+                 --set-string 'config.JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=50' > /dev/null; then
+            echo "the config guard rejected an ordinary config key or a plain JVM option" >&2; exit 1
           fi
 
           # Flyway runs only in the hook Job, as the schema owner; the pods never get that secret.

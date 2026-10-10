@@ -1,11 +1,11 @@
-{{- /* Aurora: verify the server certificate against the mounted RDS CA bundle (cicd-templates 4f0f266). */ -}}
-{{- $rootcert := printf "sslrootcert=%s" (include "rtp.databaseCaPath" .) }}
-{{- $dbUrl := toString (default "" .Values.config.DB_URL) }}
-{{- if and $dbUrl (not (and (contains "sslmode=verify-full" $dbUrl) (contains $rootcert $dbUrl))) }}
-{{- fail (printf "config.DB_URL must use sslmode=verify-full&%s (mounted ConfigMap %s)" $rootcert .Values.databaseCa.configMapName) }}
-{{- end }}
-{{- /* No value may redirect Spring's configuration, replace the database URL or switch the TLS assertion off. */ -}}
-{{- include "rtp.guardEnvKeys" (list "config" (keys .Values.config)) }}
+{{- /*
+Guardrail 4a (rtp.guardValues, _helpers.tpl): DB_URL is parsed as PgJDBC reads it
+(exactly one sslmode=verify-full, sslrootcert = the mounted RDS CA bundle, no
+verification-bypass parameter; cicd-templates 4f0f266 and 2caa48f), and no config
+key may redirect Spring's configuration, replace the database URL or switch the
+startup TLS assertion off.
+*/ -}}
+{{- include "rtp.guardValues" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -90,8 +90,9 @@ Changes oasdiff does not report, also covered by this decision:
   oracle, not about live clients.
 - `DueDate` (request expiry) is removed: `main` declared `Data.DueDate`, the monolith never had it and this
   service does not expire pay requests. A request stays AwaitingAuthorisation until a decision. Follow-up for the
-  payments owner: decide whether request-to-pay needs an expiry (status Expired, a scheduled sweep and an
-  `evt.pay.rtp.expired.v1` event); adding it later is a minor change.
+  payments owner: decide whether request-to-pay needs an expiry (status Expired, a scheduled sweep and a
+  `Payments.PayRequest.Expired.v1` event on `evt.pay.rtp.v1`); adding it later is a minor change (a new event
+  type on the aggregate topic, ADR-019 section 5).
 - A client that followed the `main` spec could never have worked against any deployment, so no working
   integration breaks.
 - The waiver applies to this change only. `scripts/ci/oasdiff-breaking.sh` (ported from the OpenAPI catalog's

@@ -68,6 +68,30 @@ A token without the claim, or with another value, is 403. The realm's default cl
 Proposed). Service clients (`svc-*`) and the first-party channels are refused even with the claim. Which
 TPPs reach the service during the cut-over is decided at the gateway (cohort `rtp-cutover-cohort`), not here.
 
+### AsyncAPI gate
+
+`ci/test` validates `api/asyncapi/*.yaml` with `@asyncapi/cli@2.13.0` and runs the catalog's breaking-change
+check against `origin/main` (`ASYNCAPI_DIR=api/asyncapi`, ADR-019 section 5). The check's scripts and the
+shared envelope are copies of the asyncapi catalog (`fintechbankx-governance-api-contracts-asyncapi-catalog`)
+at commit `44837cc`, unchanged; the step "AsyncAPI gate scripts match the catalog copy" fails when a copy's
+sha256 differs:
+
+| Copy | sha256 |
+|---|---|
+| `scripts/ci/asyncapi-breaking.mjs` | `de255737fe6b54ffbadce8e030e18eec48d0137e0abd43c790fe201a10015eb1` |
+| `scripts/ci/asyncapi-breaking.sh` | `5b39d588673c5f7ab55fcfa548fffd70b96ab9b11ea82bd2b61468dadb430c77` |
+| `scripts/ci/lib/asyncapi-model.mjs` | `212df6ca092e1ed5519664d7848c9de5fdb5d137f34faa3d31a25e3fe29b3847` |
+
+`api/asyncapi/common/event-envelope.yaml` is the catalog's `asyncapi/common/event-envelope.yaml` at the same
+commit. Waivers go in `api/asyncapi/<spec-name>.accepted-breaking.txt` and need the API owner's review
+(CODEOWNERS); the spec is not on `origin/main` yet, so the gate skips it as a new file and none is needed.
+
+Events: one topic per aggregate (ADR-019, owner decision 2026-10-08). Every PayRequest event goes to
+`evt.pay.rtp.v1`, keyed by the aggregateId, with the UTF-8 headers `eventType`, `eventId`, `correlationId`,
+`x-fapi-interaction-id` (every flow starts at the FAPI API) and `traceparent` when traced. History: until
+2026-10-08 the contract used one topic per event type; nothing was ever published to those topics, and
+migration V7 points outbox rows written before it at `evt.pay.rtp.v1`.
+
 Module layout (layout B): `open-finance-domain` (PayRequest aggregate, events, ports) ← `open-finance-application`
 (use cases) ← `open-finance-infrastructure` (JPA, JDBC idempotency, outbox, REST, security) ← `open-finance-bootstrap`
 (Spring Boot application).
@@ -80,7 +104,7 @@ Module layout (layout B): `open-finance-domain` (PayRequest aggregate, events, p
 | owning_squad | Recurring and Bulk Payments Squad |
 | data_owner | `db_pay_request_to_pay_<env>`, schema `sc_pay_request_to_pay` (`pay_request`, `pay_request_idempotency`, `dpop_proof_jti`, `outbox_event`) |
 | upstream_dependencies | Keycloak realm `fintechbankx` (tokens, `aud` must contain `svc-pay-request-to-pay`); no synchronous calls to other services |
-| published_events | `evt.pay.rtp.created.v1` (`Payments.PayRequest.Created.v1`), `evt.pay.rtp.accepted.v1` (`Payments.PayRequest.Accepted.v1`), `evt.pay.rtp.rejected.v1` (`Payments.PayRequest.Rejected.v1`), through the transactional outbox |
+| published_events | `evt.pay.rtp.v1`, one topic for the PayRequest aggregate (ADR-019): `Payments.PayRequest.Created.v1`, `Payments.PayRequest.Accepted.v1`, `Payments.PayRequest.Rejected.v1`, named by the `eventType` header, key = aggregateId, through the transactional outbox |
 | consumed_events | none |
 | mesh callers needing an ALLOW rule | `cluster.local/ns/istio-ingress/sa/istio-ingressgateway` (TPP API traffic) |
 

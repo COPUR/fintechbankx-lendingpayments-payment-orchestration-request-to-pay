@@ -10,7 +10,8 @@ locals {
   service_slug = "payment-request-to-pay-service"
   name         = "${var.environment}-${local.service_slug}"
   database     = "db_pay_request_to_pay_${var.environment}"
-  topics       = ["evt.pay.rtp.created.v1", "evt.pay.rtp.accepted.v1", "evt.pay.rtp.rejected.v1"]
+  # One topic per aggregate (ADR-019): every PayRequest event type goes to evt.pay.rtp.v1.
+  topics = ["evt.pay.rtp.v1"]
 
   tags = merge({
     Service            = local.service_id
@@ -218,7 +219,7 @@ resource "aws_iam_role" "workload" {
 
 # TODO(platform): replace with the terraform-modules msk-client-access module
 # once it exists on main; until then this inline policy scopes the producer
-# to the evt.pay.rtp topics. No CreateTopic: topics come from the catalog.
+# to the aggregate topic evt.pay.rtp.v1. No CreateTopic: topics come from the catalog.
 data "aws_iam_policy_document" "msk_producer" {
   statement {
     sid       = "ConnectToCluster"

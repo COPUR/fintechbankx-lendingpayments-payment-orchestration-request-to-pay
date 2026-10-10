@@ -152,7 +152,7 @@ requesttopay:
   outbox:
     retention: P7D
     relay:
-      # Off until the evt.pay.rtp.*.v1 topics exist on the platform cluster and the payments
+      # Off until the aggregate topic evt.pay.rtp.v1 exists on the platform cluster and the payments
       # owner has decided who may accept a pay request (runbook preconditions).
       enabled: ${OUTBOX_RELAY_ENABLED:false}
       interval: PT1S

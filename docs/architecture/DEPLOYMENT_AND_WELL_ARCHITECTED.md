@@ -10,7 +10,7 @@ not listed is not done yet.
 TPP ─▶ Istio ingress ─▶ payment-request-to-pay-service pods (EKS, namespace payments, 3..12, HPA)
                            │  ├─ JDBC ─▶ Aurora PostgreSQL Serverless v2 (Multi-AZ), schema sc_pay_request_to_pay
                            │  └─ JWKS ─▶ Keycloak realm fintechbankx
-                           └─ outbox relay ─▶ Amazon MSK (IAM auth) evt.pay.rtp.*.v1
+                           └─ outbox relay ─▶ Amazon MSK (IAM auth) evt.pay.rtp.v1
 ```
 
 | Artifact | Path |

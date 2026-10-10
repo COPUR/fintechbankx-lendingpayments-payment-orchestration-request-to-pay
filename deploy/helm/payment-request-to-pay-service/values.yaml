@@ -60,7 +60,7 @@ config:
   DB_USERNAME: payment_request_to_pay_app
   DB_POOL_MAX: "10"
   KAFKA_SECURITY_PROTOCOL: SASL_SSL
-  # Off until evt.pay.rtp.*.v1 exist on the cluster (runbook step 1); events wait in the outbox.
+  # Off until evt.pay.rtp.v1 exists on the cluster (runbook step 1); events wait in the outbox.
   OUTBOX_RELAY_ENABLED: "false"
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
 

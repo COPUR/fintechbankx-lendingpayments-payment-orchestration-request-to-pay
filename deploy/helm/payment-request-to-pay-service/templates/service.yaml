@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "rtp.name" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "rtp.name" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "rtp.labels" . | nindent 4 }}
 spec:

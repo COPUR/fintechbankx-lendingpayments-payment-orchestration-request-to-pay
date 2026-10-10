@@ -5,8 +5,8 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "rtp.name" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "rtp.name" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "rtp.labels" . | nindent 4 }}
 spec:
@@ -19,20 +19,20 @@ spec:
         {{- range .Values.networkPolicy.apiCallerNamespaces }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ . }}
+              kubernetes.io/metadata.name: {{ . | quote }}
         {{- end }}
       ports:
-        - port: {{ .Values.service.port }}
+        - port: {{ .Values.service.port | int }}
           protocol: TCP
     # Scrape: the observability PodMonitor reads Istio's merged metrics on
     # 15020 (app 8081 and Envoy); 15020 and 8081 from that namespace only.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace }}
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace | quote }}
       ports:
         - port: 15020
           protocol: TCP
-        - port: {{ .Values.service.managementPort }}
+        - port: {{ .Values.service.managementPort | int }}
           protocol: TCP
 {{- end }}

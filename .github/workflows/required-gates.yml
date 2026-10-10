@@ -159,10 +159,22 @@ jobs:
             npx -y @asyncapi/cli@2.13.0 validate "$spec"
           done
 
+      # The gate scripts are copies of the asyncapi catalog at 44837cc, unchanged (README, "AsyncAPI gate").
+      # Any edit to a copy fails here: re-copy from the catalog and update these hashes and the README together.
+      - name: AsyncAPI gate scripts match the catalog copy
+        shell: bash
+        run: |
+          sha256sum --check --strict <<'EOF'
+          de255737fe6b54ffbadce8e030e18eec48d0137e0abd43c790fe201a10015eb1  scripts/ci/asyncapi-breaking.mjs
+          5b39d588673c5f7ab55fcfa548fffd70b96ab9b11ea82bd2b61468dadb430c77  scripts/ci/asyncapi-breaking.sh
+          212df6ca092e1ed5519664d7848c9de5fdb5d137f34faa3d31a25e3fe29b3847  scripts/ci/lib/asyncapi-model.mjs
+          EOF
+
       # ADR-019 section 5 provider gate, the equivalent of cicd-templates 4129ceb's contract-checks
       # asyncapi job until this repository moves to the shared workflows: the catalog's breaking-change
-      # rules (scripts copied unchanged from asyncapi catalog #10 b0e31ee) against the merge base of
-      # origin/main. Findings are waived only in api/asyncapi/<spec-name>.accepted-breaking.txt.
+      # rules (scripts copied unchanged from the asyncapi catalog at 44837cc, one topic per aggregate)
+      # against the merge base of origin/main. Findings are waived only in
+      # api/asyncapi/<spec-name>.accepted-breaking.txt (CODEOWNERS: API owner review).
       - name: AsyncAPI breaking-change check
         if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
         env:

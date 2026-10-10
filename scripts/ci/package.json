@@ -2,7 +2,7 @@
   "name": "service-asyncapi-gate",
   "version": "0.0.0",
   "private": true,
-  "description": "Dependencies of the AsyncAPI breaking-change check copied from the asyncapi catalog (#10 b0e31ee).",
+  "description": "Dependencies of the AsyncAPI breaking-change check copied from the asyncapi catalog (44837cc).",
   "type": "module",
   "engines": {
     "node": ">=22"

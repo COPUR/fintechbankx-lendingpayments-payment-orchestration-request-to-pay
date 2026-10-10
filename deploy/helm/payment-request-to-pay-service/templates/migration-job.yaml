@@ -1,4 +1,6 @@
 {{- if .Values.migration.enabled }}
+{{- /* Guardrail 4a: the vendored platform guard runs on the Job's routes too (rtp.guard, _helpers.tpl). */ -}}
+{{- include "rtp.guard" . -}}
 {{- /*
 Flyway as a separate step (platform contract "Database roles"): runs before
 every install and upgrade, as the schema owner, with the db-migration secret,
@@ -11,8 +13,8 @@ namespace with them. A failed Job stays for inspection until the next attempt.
 apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:
-  name: {{ include "rtp.migrationName" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "rtp.migrationName" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "rtp.migrationLabels" . | nindent 4 }}
   annotations:
@@ -20,28 +22,29 @@ metadata:
     helm.sh/hook-weight: "-10"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
-  refreshInterval: {{ .Values.externalSecret.refreshInterval }}
+  refreshInterval: {{ .Values.externalSecret.refreshInterval | quote }}
   secretStoreRef:
     kind: ClusterSecretStore
     name: aws-secrets-manager
   target:
-    name: {{ include "rtp.migrationName" . }}
+    name: {{ include "rtp.migrationName" . | quote }}
     creationPolicy: Owner
+  # The only keys this Secret materialises (rtp.guard passes them to fbx.guard as externalSecret.extraData).
   data:
-    - secretKey: DB_MIGRATION_USERNAME
+    - secretKey: "DB_MIGRATION_USERNAME"
       remoteRef:
-        key: {{ include "rtp.remoteKey" (list "migration.remoteSecretName" .Values.migration.remoteSecretName) }}
-        property: username
-    - secretKey: DB_MIGRATION_PASSWORD
+        key: {{ include "rtp.remoteKey" (list "migration.remoteSecretName" .Values.migration.remoteSecretName) | quote }}
+        property: "username"
+    - secretKey: "DB_MIGRATION_PASSWORD"
       remoteRef:
-        key: {{ include "rtp.remoteKey" (list "migration.remoteSecretName" .Values.migration.remoteSecretName) }}
-        property: password
+        key: {{ include "rtp.remoteKey" (list "migration.remoteSecretName" .Values.migration.remoteSecretName) | quote }}
+        property: "password"
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "rtp.migrationName" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "rtp.migrationName" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "rtp.migrationLabels" . | nindent 4 }}
   annotations:
@@ -49,8 +52,8 @@ metadata:
     helm.sh/hook-weight: "0"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
-  backoffLimit: {{ .Values.migration.backoffLimit }}
-  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  backoffLimit: {{ .Values.migration.backoffLimit | int }}
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds | int }}
   template:
     metadata:
       # app.kubernetes.io/name = the service account, as on the service
@@ -59,15 +62,16 @@ spec:
       # NetworkPolicy, topology spread and Deployment from selecting this pod.
       # No fintechbankx.io/service-id: observability would scrape it and count
       # a completed Job pod as a down service instance.
+      # Sidecar-less, like the payments model (mesh d2ccacc): Aurora is outside
+      # the mesh, the Job talks to nothing in it, and a sidecar-less Job may not
+      # share its component with a meshed workload, which db-migration does not.
       labels:
         {{- include "rtp.baseLabels" . | nindent 8 }}
         app.kubernetes.io/component: db-migration
-        fintechbankx.io/squad: {{ .Values.squad }}
-        sidecar.istio.io/inject: {{ .Values.migration.istioSidecar | quote }}
+        fintechbankx.io/squad: {{ .Values.squad | quote }}
+        sidecar.istio.io/inject: "false"
       annotations:
-        # Native sidecar (mesh-wide): it stops when the container exits, so
-        # the Job completes; see values migration.istioSidecar.
-        sidecar.istio.io/inject: {{ .Values.migration.istioSidecar | quote }}
+        sidecar.istio.io/inject: "false"
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -79,9 +83,11 @@ spec:
           type: RuntimeDefault
       containers:
         - name: db-migration
-          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           args: ["migrate"]
+          # The only env the chart renders here: guarded config values and the bundle path, then
+          # envFrom of the hook Secret.
           env:
             # Path of the mounted RDS CA bundle (cicd-templates 4f0f266).
             - name: DB_SSL_ROOT_CERT
@@ -93,7 +99,7 @@ spec:
               value: {{ .Values.config.DB_USERNAME | quote }}
           envFrom:
             - secretRef:
-                name: {{ include "rtp.migrationName" . }}
+                name: {{ include "rtp.migrationName" . | quote }}
           resources:
             {{- toYaml .Values.migration.resources | nindent 12 }}
           securityContext:
@@ -105,15 +111,15 @@ spec:
             - name: tmp
               mountPath: /tmp
             - name: database-ca
-              mountPath: {{ .Values.databaseCa.mountPath }}
+              mountPath: {{ .Values.databaseCa.mountPath | quote }}
               readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
         - name: database-ca
           configMap:
-            name: {{ .Values.databaseCa.configMapName }}
+            name: {{ .Values.databaseCa.configMapName | quote }}
             items:
-              - key: {{ .Values.databaseCa.key }}
-                path: {{ .Values.databaseCa.key }}
+              - key: {{ .Values.databaseCa.key | quote }}
+                path: {{ .Values.databaseCa.key | quote }}
 {{- end }}

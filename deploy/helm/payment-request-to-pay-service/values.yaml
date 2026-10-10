@@ -50,19 +50,26 @@ kafka:
   strimziClusterCaSecret: fintechbankx-cluster-ca-cert
 
 # Non-secret runtime settings, rendered into a ConfigMap. The first four are required.
-# Guardrail 4a (templates/_helpers.tpl rtp.guardValues, templates/_fbx-guard.tpl
-# vendored from cicd-templates 2caa48f): rendering fails for any key Spring would
-# read as spring.config.*, spring.profiles.*, spring.datasource.* (USERNAME and
-# PASSWORD excepted), spring.flyway.*, spring.liquibase.*, spring.r2dbc.*,
-# spring.application.json, fintechbankx.tls.*, spring.kafka.*security.protocol or
-# spring.kafka.properties.*, in any case or separator, indexed forms included; for
-# a *JDBC_URL*, *SSLFACTORY* or *SSLHOSTNAMEVERIFIER* name; for a JAVA_TOOL_OPTIONS,
-# JDK_JAVA_OPTIONS or _JAVA_OPTIONS value that mentions datasource, flyway,
-# liquibase, r2dbc, jdbc, ssl, application.json, spring.config, spring.profiles,
-# fintechbankx or kafka, or reads options from a file; and for
-# KAFKA_SECURITY_PROTOCOL other than SASL_SSL or SSL. The service asserts TLS at
-# startup (sslmode=verify-full, Kafka SASL_SSL or SSL) and the chart never
-# switches that off. There is no extraEnv.
+# Guardrail 4a: every key and value goes through the platform guard vendored in
+# templates/_fbx_helpers.tpl (cicd-templates a4f0072, fbx.guard) plus this chart's
+# rules in templates/_helpers.tpl (rtp.guard). Rendering fails for any key Spring
+# would read as spring.config.*, spring.profiles.*, spring.datasource.* (USERNAME
+# and PASSWORD excepted), spring.flyway.*, spring.liquibase.*, spring.r2dbc.*,
+# spring.application.json, spring.ssl.*, *ssl_bundle*, fintechbankx.tls.* or
+# spring.kafka.properties.*, in any spelling relaxed binding accepts (indexed
+# forms, canonical forms); for a *JDBC_URL*, *SSL_FACTORY*, *SSL_HOSTNAME_VERIFIER*,
+# *SSL_PASSWORD_CALLBACK*, *SSL_ROOT_CERT* or *SSL_MODE* name (DB_SSL_ROOT_CERT is
+# rendered by the chart); for DB_URL in another spelling; for a key that is not a
+# ConfigMap key ([-._a-zA-Z0-9]+); for a JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS or
+# _JAVA_OPTIONS value that mentions datasource, flyway, liquibase, r2dbc, jdbc,
+# ssl, application.json, spring.config, spring.profiles, fintechbankx, kafka,
+# security.protocol, endpoint.identification, java.security.properties, jdk.tls
+# or hostname verification, contains $( or ${, or reads options from a file; and
+# for a *SECURITY_PROTOCOL value other than the kafka.profile's (SASL_SSL for
+# kafka-msk, SSL for kafka-strimzi) or an *ENDPOINT_IDENTIFICATION_ALGORITHM other
+# than https. There is no extraEnv, envFrom or externalSecret.dataFrom; setting one
+# fails the render. The service asserts TLS at startup (sslmode=verify-full,
+# Kafka SASL_SSL or SSL) and the chart never switches that off.
 config:
   # jdbc:postgresql://<aurora-writer>:5432/db_pay_request_to_pay_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
   # (deploy/terraform output jdbc_url). Parsed as PgJDBC reads it: exactly one sslmode=verify-full,
@@ -76,7 +83,9 @@ config:
   # Runtime role (DML only, granted by V5); the schema owner is only in the migration Job.
   DB_USERNAME: payment_request_to_pay_app
   DB_POOL_MAX: "10"
-  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  # No KAFKA_SECURITY_PROTOCOL here: the kafka-msk / kafka-strimzi profile in the image sets
+  # spring.kafka.security.protocol (SASL_SSL / SSL) and the service asserts it at startup. A value
+  # set here must match the profile's protocol or the render fails.
   # Off until evt.pay.rtp.v1 exists on the cluster (runbook step 1); events wait in the outbox.
   OUTBOX_RELAY_ENABLED: "false"
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
@@ -100,12 +109,10 @@ migration:
   # "password"} of the schema owner; deploy/terraform output
   # migration_db_secret_name).
   remoteSecretName: ""
-  # Native sidecars are mesh-wide (mesh 4bf3906, istiod
-  # ENABLE_NATIVE_SIDECARS "true"): the proxy is a restartable init container
-  # and stops when the Flyway container exits, so the Job completes inside the
-  # mesh like the service pods. The mesh contract lists no exemption for it.
-  # false only on a cluster without native sidecars.
-  istioSidecar: true
+  # The Job pod is sidecar-less (sidecar.istio.io/inject "false", like the
+  # payments model; mesh d2ccacc): it talks only to Aurora, outside the mesh,
+  # and carries its own app.kubernetes.io/component db-migration, which no
+  # meshed workload shares. Not configurable.
   backoffLimit: 1
   activeDeadlineSeconds: 600
   resources:

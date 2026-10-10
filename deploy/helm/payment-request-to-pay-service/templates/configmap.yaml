@@ -1,16 +1,16 @@
 {{- /*
-Guardrail 4a (rtp.guardValues, _helpers.tpl): DB_URL is parsed as PgJDBC reads it
-(exactly one sslmode=verify-full, sslrootcert = the mounted RDS CA bundle, no
-verification-bypass parameter; cicd-templates 4f0f266 and 2caa48f), and no config
-key may redirect Spring's configuration, replace the database URL or switch the
-startup TLS assertion off.
+Guardrail 4a: every config key and value went through rtp.guard (included at the
+top of deployment.yaml and migration-job.yaml; a failure there stops this render
+too): DB_URL parsed as PgJDBC reads it, no key that redirects Spring's
+configuration, activates a profile, replaces the database URL or switches the
+startup TLS assertion off. Every key and value is quoted so that no value can
+close its line and add a key the guard never saw.
 */ -}}
-{{- include "rtp.guardValues" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "rtp.name" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "rtp.name" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "rtp.labels" . | nindent 4 }}
 data:
@@ -21,7 +21,7 @@ data:
   OIDC_JWK_SET_URI: {{ required "config.OIDC_JWK_SET_URI is required" .Values.config.OIDC_JWK_SET_URI | quote }}
   {{- range $key, $value := .Values.config }}
   {{- if not (has $key (list "DB_URL" "KAFKA_BOOTSTRAP_SERVERS" "OIDC_ISSUER_URI" "OIDC_JWK_SET_URI")) }}
-  {{ $key }}: {{ $value | quote }}
+  {{ $key | quote }}: {{ $value | quote }}
   {{- end }}
   {{- end }}
   # Micrometer common tags (platform convention, recurring-mandates 2ad4e7f):

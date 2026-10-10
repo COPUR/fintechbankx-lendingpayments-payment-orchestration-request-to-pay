@@ -99,8 +99,11 @@ uses `istio-ingress/istio-ingressgateway`, which matches the rows above.
 (test `tests/sidecar-lifecycle.test.mjs` forbids an environment override to `false`). The proxy starts before and
 stops after the application container. Chart choices that follow: the Deployment carries **no**
 `terminationDrainDuration` annotation (dropped; `terminationGracePeriodSeconds: 65` still bounds preStop 10 s plus
-the 40 s Spring shutdown phase), and the Flyway migration Job runs **with** a sidecar
-(`migration.istioSidecar: true`), so it completes inside the mesh. The mesh contract lists no sidecar exemption for it.
+the 40 s Spring shutdown phase). The Flyway migration Job runs **without** a sidecar
+(`sidecar.istio.io/inject: "false"`, the payments model; mesh d2ccacc): it talks only to Aurora, outside the
+mesh, and carries its own `app.kubernetes.io/component: db-migration`, which no meshed workload shares (the
+mesh refuses a meshed workload that shares a sidecar-less Job's component). The earlier `migration.istioSidecar`
+value is gone.
 
 **C. Still requested from the mesh team.** Egress under `REGISTRY_ONLY` for the service account: Aurora writer
 and reader on 5432 (TLS, `sslmode=verify-full`), MSK IAM brokers on 9098 and regional STS on 443 for IRSA. The

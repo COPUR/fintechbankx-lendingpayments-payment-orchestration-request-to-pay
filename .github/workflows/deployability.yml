@@ -65,20 +65,38 @@ jobs:
             fi
           done
 
-          # Guardrail 4a, chart layer. The platform rules are a vendored copy of cicd-templates 2caa48f
-          # (charts/fintechbankx-service/templates/_helpers.tpl:70-239) in templates/_fbx-guard.tpl, pinned
-          # by sha256 (README "Startup TLS assertion"); this chart's additions are in templates/_helpers.tpl.
-          echo "82ea4815d60ea1a6b9393ee1ee7a0df1ac72f3671d67e88c1ddc74b0759dfd4f  $chart/templates/_fbx-guard.tpl" | sha256sum -c
+          # Guardrail 4a, chart layer. The platform rules are the vendored, unchanged copy of cicd-templates
+          # a4f0072 charts/fintechbankx-service/templates/_helpers.tpl in templates/_fbx_helpers.tpl, pinned
+          # by sha256 (README "Startup TLS assertion"); this chart's adapter and additions are in
+          # templates/_helpers.tpl (rtp.guard).
+          echo "1fd684735383301baf3052c5d8978dd86edee1ac1c66ebfb944a8a6a166f4c92  $chart/templates/_fbx_helpers.tpl" | sha256sum -c --strict
+          # refuse <expected error ERE> <helm args...>: the render must fail for the expected reason, so a
+          # probe cannot pass because the render failed for another one.
+          refuse() {
+            local expect=$1; shift
+            local out
+            if out="$(helm template ci "$chart" "${args[@]}" "$@" 2>&1)"; then
+              echo "chart rendered with: $*" >&2; exit 1
+            fi
+            if ! grep -Eq "$expect" <<<"$out"; then
+              echo "chart refused '$*' for another reason than /$expect/:" >&2; echo "$out" | head -3 >&2; exit 1
+            fi
+          }
 
           # Aurora TLS (cicd-templates 4f0f266): bundle mounted at /etc/fintechbankx/rds-ca, exported as
           # DB_SSL_ROOT_CERT in the pods and the migration Job; DB_URL must verify-full against it.
           ca=/etc/fintechbankx/rds-ca/global-bundle.pem
           test "$(grep -c 'name: DB_SSL_ROOT_CERT' <<<"$rendered")" -eq 2
           grep -A1 'name: DB_SSL_ROOT_CERT' <<<"$rendered" | grep -q "value: \"$ca\""
-          grep -q 'mountPath: /etc/fintechbankx/rds-ca' <<<"$rendered"
+          grep -q 'mountPath: "/etc/fintechbankx/rds-ca"' <<<"$rendered"
           # DB_URL is parsed the way PgJDBC reads it (fbx.validateJdbcUrl), not searched for a substring:
           # exactly one lower-case sslmode=verify-full, exactly one sslrootcert equal to the mounted bundle,
-          # no verification-bypass parameter, no percent-encoded '=' or '&', no TLS key before the '?'.
+          # no verification-bypass parameter, no percent-encoded '=' or '&', no TLS key before the '?',
+          # no ${...} placeholder or $(VAR) reference.
+          refuse 'config.DB_URL must not contain' --set-string "config.DB_URL=jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=\${CA}"
+          refuse 'config.DB_URL must not contain' --set-string 'config.DB_URL=jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=$(CA)'
+          refuse 'config.DB_URL must be a jdbc:' --set-string 'config.DB_URL=postgresql://db.ci:5432/db'
+          refuse 'is DB_URL in another spelling' --set-string 'config.db\.url=x'
           for url in 'jdbc:postgresql://db.ci:5432/db?sslmode=require' \
                      'jdbc:postgresql://db.ci:5432/db?sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem' \
                      'jdbc:postgresql://db.ci:5432/db?sslmode=verify-full' \
@@ -93,61 +111,81 @@ jobs:
                      "jdbc:postgresql://db.ci:5432/db?SSLMODE=verify-full&sslrootcert=$ca" \
                      "jdbc:postgresql://db.ci:5432/db?sslmode%3Dverify-full&sslrootcert=$ca" \
                      "jdbc:postgresql://sslmode=disable@db.ci:5432/db?sslmode=verify-full&sslrootcert=$ca"; do
-            if helm template ci "$chart" "${args[@]}" --set-string "config.DB_URL=$url" > /dev/null 2>&1; then
-              echo "chart rendered DB_URL $url" >&2; exit 1
-            fi
+            refuse 'config.DB_URL must' --set-string "config.DB_URL=$url"
           done
           # Governance round 3 (2b), rounds 5 and 6: no config key may redirect Spring's configuration,
           # activate a profile in the image (application-local.yml switches the TLS assertion off), replace
-          # the database URL behind the verify-full check, change the Kafka protocol or switch the assertion
-          # off, in any spelling Spring's relaxed binding reads, indexed forms included
+          # the database URL behind the verify-full check, replace a trust anchor (spring.ssl.*, *ssl.bundle*,
+          # DB_SSL_ROOT_CERT, PGSSLROOTCERT), set Kafka client properties or switch the assertion off, in any
+          # spelling Spring's relaxed binding reads, indexed and canonical forms included
           # (fbx.datasourceOverrideName + rtp.guardConfigName).
           for key in SPRING_CONFIG_IMPORT spring_config_import Spring_Config_Location SPRING_CONFIG_ADDITIONAL_LOCATION \
                      SPRING_CONFIG_IMPORT_0 SPRING_CONFIG_IMPORT_0_ SPRING_CONFIG_LOCATION_0 SPRING_CONFIG_ADDITIONAL_LOCATION_0 \
-                     SPRING_CONFIG_NAME spring.config.import spring-config-import \
+                     SPRING_CONFIG_NAME spring.config.import spring-config-import spring.config.activate.on-profile \
                      SPRING_PROFILES_ACTIVE SPRING_PROFILES_ACTIVE_0 SPRING_PROFILES_INCLUDE SPRING_PROFILES_INCLUDE_0 \
                      SPRING_PROFILES_DEFAULT SPRING_PROFILES_GROUP_KAFKA_MSK SPRING_PROFILES_GROUP_KAFKA_MSK_0 spring.profiles.group.kafka-msk \
+                     spring.pro-files.active \
                      SPRING_APPLICATION_JSON spring.application.json \
                      SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_DATASOURCE_HIKARI_JDBCURL spring.datasource.hikari.jdbc-url \
-                     SPRING_FLYWAY_URL SPRING_FLYWAY_LOCATIONS SPRING_LIQUIBASE_URL SPRING_R2DBC_URL MY_JDBC_URL X_SSLFACTORY \
+                     SPRING_FLYWAY_URL SPRING_FLYWAY_LOCATIONS SPRING_LIQUIBASE_URL SPRING_R2DBC_URL MY_JDBC_URL X_SSLFACTORY PGJDBC_SSL_FACTORY \
+                     SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE spring.ssl.bundle.jks.kafka.truststore.location SPRING_KAFKA_SSL_BUNDLE \
+                     DB_SSL_ROOT_CERT PGSSLROOTCERT OPF_DB_SSL_MODE \
                      FINTECHBANKX_TLS_ENFORCE FINTECHBANKX_TLS_ENFORCE_0 fintechbankx.tls.enforce fintechbankx-tls-enforce FINTECHBANKXTLS_ENFORCE \
-                     SPRING_KAFKA_SECURITY_PROTOCOL SPRING_KAFKA_PRODUCER_SECURITY_PROTOCOL SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL \
-                     SPRING_KAFKA_PROPERTIES_SSL_TRUSTSTORE_LOCATION; do
-            if helm template ci "$chart" "${args[@]}" --set-string "config.${key//./\\.}=x" > /dev/null 2>&1; then
-              echo "chart rendered with config.$key" >&2; exit 1
-            fi
+                     SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL SPRING_KAFKA_PROPERTIES_SSL_TRUSTSTORE_LOCATION spring.kafka.properties.sasl.jaas.config; do
+            refuse "config\.${key//./\\.} is not allowed|config\.${key//./\\.} must" --set-string "config.${key//./\\.}=x"
           done
+          # Kafka protocol names are checked by value (fbx.validateKafkaTls): SASL_SSL with kafka-msk, SSL with
+          # kafka-strimzi, never PLAINTEXT; endpoint identification must stay https.
+          for key in KAFKA_SECURITY_PROTOCOL SPRING_KAFKA_SECURITY_PROTOCOL SPRING_KAFKA_PRODUCER_SECURITY_PROTOCOL; do
+            refuse "config\.$key must be SASL_SSL or SSL" --set-string "config.$key=PLAINTEXT"
+            refuse "config\.$key must be SASL_SSL with kafka.runtime msk" --set-string "config.$key=SSL"
+            refuse "config\.$key must be SSL with kafka.runtime strimzi" --set kafka.profile=kafka-strimzi --set-string "config.$key=SASL_SSL"
+          done
+          refuse 'must be https' --set-string 'config.SPRING_KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM='
           # JVM options need a literal value that names none of the routes above (fbx.validateJvmOptions,
-          # extended with fintechbankx and kafka); the entrypoint reads no JAVA_OPTS.
+          # plus rtp.guardConfigName's fintechbankx and kafka words); the entrypoint reads no JAVA_OPTS.
           for name in JAVA_TOOL_OPTIONS JDK_JAVA_OPTIONS _JAVA_OPTIONS; do
             for opt in '-Dfintechbankx.tls.enforce=false' '-Dspring.datasource.url=jdbc:postgresql://db.ci:5432/db' \
                        '-Dspring.profiles.default=local' '-Dspring.config.import[0]=file:/tmp/x.yml' \
                        '-Dspring.kafka.security.protocol=PLAINTEXT' '-Djavax.net.ssl.trustStore=/tmp/x' \
-                       '@/tmp/opts' '-XX:VMOptionsFile=/tmp/opts' '-XX:+UseG1GC -Dspring.application.json=x'; do
-              if helm template ci "$chart" "${args[@]}" --set-string "config.$name=$opt" > /dev/null 2>&1; then
-                echo "chart rendered with config.$name=$opt" >&2; exit 1
-              fi
+                       '@/tmp/opts' '-XX:VMOptionsFile=/tmp/opts' '-XX:+UseG1GC -Dspring.application.json=x' \
+                       '-Djdk.tls.client.protocols=TLSv1' '-Djava.security.properties=/tmp/java.security' \
+                       '-Dspring..config.import=file:/tmp/x.yml' '-Dspring.kafka.properties.sasl.jaas.config=x' \
+                       '-XX:MaxRAMPercentage=75 $(FBX_X)' '-Dfintechbankx.x=${FBX_X}'; do
+              refuse "config\.$name must not" --set-string "config.$name=$opt"
             done
           done
-          # The profile the chart activates is exactly kafka-msk or kafka-strimzi (rtp.kafkaProfile): no local,
-          # no list, no empty value. The Kafka protocol default must be a TLS one, and extraEnv does not exist
-          # (Kubernetes env would win over the ConfigMap).
-          for wrong in "--set kafka.profile=local" "--set-string kafka.profile=kafka-msk\,local" "--set kafka.profile=" \
-                       "--set config.KAFKA_SECURITY_PROTOCOL=PLAINTEXT" "--set extraEnv[0].name=DB_URL --set extraEnv[0].value=x"; do
-            if helm template ci "$chart" "${args[@]}" $wrong > /dev/null 2>&1; then
-              echo "chart rendered with $wrong" >&2; exit 1
-            fi
-          done
+          # The profile the chart activates is exactly kafka-msk or kafka-strimzi (rtp.kafkaRuntime -> fbx.kafkaProfile):
+          # no local, no list, no empty value.
+          refuse 'kafka.profile must be exactly kafka-msk or kafka-strimzi' --set kafka.profile=local
+          refuse 'kafka.profile must be exactly kafka-msk or kafka-strimzi' --set-string 'kafka.profile=kafka-msk\,local'
+          refuse 'kafka.profile must be exactly kafka-msk or kafka-strimzi' --set kafka.profile=
+          # Env sources the guard never sees do not exist in this chart: extraEnv (even with a $(VAR) value or
+          # valueFrom), envFrom, extraEnvFrom and externalSecret.dataFrom all fail the render.
+          refuse 'extraEnv' --set extraEnv[0].name=DB_URL --set extraEnv[0].value=x
+          refuse 'extraEnv' --set extraEnv[0].name=FOO --set-string 'extraEnv[0].value=$(DB_URL)'
+          refuse 'extraEnv' --set extraEnv[0].name=JAVA_TOOL_OPTIONS --set extraEnv[0].valueFrom.secretKeyRef.name=x --set extraEnv[0].valueFrom.secretKeyRef.key=y
+          refuse 'envFrom is not supported' --set envFrom[0].configMapRef.name=other
+          refuse 'extraEnvFrom is not supported' --set extraEnvFrom[0].secretRef.name=other
+          refuse 'externalSecret.dataFrom is not supported' --set externalSecret.dataFrom[0].extract.key=dev/payment-request-to-pay-service/db-app
+          # Template interpolation: a config key with a newline must not inject a second key; a value with a
+          # newline is rendered quoted, so the ConfigMap keeps exactly the keys the guard saw.
+          printf 'config:\n  "X\\nSPRING_CONFIG_IMPORT": "optional:file:/tmp/x.yml"\n' > /tmp/rtp-key-newline.yaml
+          refuse 'is not a ConfigMap key' -f /tmp/rtp-key-newline.yaml
+          printf 'config:\n  X: "a\\nSPRING_CONFIG_IMPORT: optional:file:/tmp/x.yml"\n' > /tmp/rtp-value-newline.yaml
+          helm template ci "$chart" "${args[@]}" -f /tmp/rtp-value-newline.yaml --show-only templates/configmap.yaml \
+            | python3 -c 'import sys,yaml; d=yaml.safe_load(sys.stdin)["data"]; assert "SPRING_CONFIG_IMPORT" not in d and "\n" in d["X"], d'
           if ! helm template ci "$chart" "${args[@]}" --set-string config.DB_POOL_MIN_IDLE=2 \
-                 --set-string 'config.JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=50' > /dev/null; then
-            echo "the config guard rejected an ordinary config key or a plain JVM option" >&2; exit 1
+                 --set-string 'config.JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=50' \
+                 --set-string config.KAFKA_SECURITY_PROTOCOL=SASL_SSL > /dev/null; then
+            echo "the config guard rejected an ordinary config key, a plain JVM option or the MSK protocol" >&2; exit 1
           fi
 
           # Flyway runs only in the hook Job, as the schema owner; the pods never get that secret.
           job="$(helm template ci "$chart" "${args[@]}" --show-only templates/migration-job.yaml)"
           grep -q 'helm.sh/hook: pre-install,pre-upgrade' <<<"$job"
           grep -q 'args: \["migrate"\]' <<<"$job"
-          grep -q 'key: dev/payment-request-to-pay-service/db-migration' <<<"$job"
+          grep -q 'key: "dev/payment-request-to-pay-service/db-migration"' <<<"$job"
           deployment="$(helm template ci "$chart" "${args[@]}" --show-only templates/deployment.yaml)"
           grep -A1 'name: SPRING_FLYWAY_ENABLED' <<<"$deployment" | grep -q 'value: "false"'
           if grep -q 'db-migration' <<<"$deployment"; then echo "the service pods reference the migration secret" >&2; exit 1; fi
@@ -176,8 +214,9 @@ jobs:
           # Platform review round 2: NetworkPolicy is the mesh repo's (off by default, never a CIDR,
           # no open probe port), the observability PodMonitor is the single scrape path (no
           # ServiceMonitor), squad label, 65 s grace period with no sidecar drain annotation (native
-          # sidecars are mesh-wide, mesh 4bf3906), the migration Job inside the mesh, and Strimzi
-          # trusts the cluster CA.
+          # sidecars are mesh-wide, mesh 4bf3906), the migration Job sidecar-less with its own component
+          # (mesh d2ccacc: a sidecar-less Job may not share its component with a meshed workload), and
+          # Strimzi trusts the cluster CA.
           if grep -qE '^kind: (NetworkPolicy|ServiceMonitor)$' <<<"$rendered"; then
             echo "chart renders a NetworkPolicy or ServiceMonitor by default" >&2; exit 1
           fi
@@ -191,14 +230,24 @@ jobs:
           grep -q 'prometheus.io/port: "8081"' <<<"$deployment"
           if grep -q 'terminationDrainDuration' <<<"$deployment"; then echo "drain annotation is redundant with native sidecars" >&2; exit 1; fi
           job="$(helm template ci "$chart" "${args[@]}" --show-only templates/migration-job.yaml)"
-          grep -q 'sidecar.istio.io/inject: "true"' <<<"$job"
+          python3 - "$job" "$deployment" <<'PY'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(sys.argv[1]) if d]
+          job = [d for d in docs if d["kind"] == "Job"][0]["spec"]["template"]["metadata"]
+          dep = yaml.safe_load(sys.argv[2])["spec"]["template"]["metadata"]
+          assert job["labels"]["sidecar.istio.io/inject"] == "false", job["labels"]
+          assert job["annotations"]["sidecar.istio.io/inject"] == "false", job["annotations"]
+          assert dep["labels"]["sidecar.istio.io/inject"] == "true", dep["labels"]
+          # A sidecar-less Job may not share app.kubernetes.io/component with a meshed workload (mesh d2ccacc).
+          assert job["labels"]["app.kubernetes.io/component"] == "db-migration" != dep["labels"]["app.kubernetes.io/component"], (job["labels"], dep["labels"])
+          PY
           grep -q 'terminationGracePeriodSeconds: 65' <<<"$deployment"
-          test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
+          test "$(grep -c 'fintechbankx.io/squad: "payments"' <<<"$rendered")" -ge 5
           # Micrometer common tags (recurring-mandates 2ad4e7f): squad = the release namespace, app = the service account.
           grep -q 'METRICS_TAG_SQUAD: "payments"' <<<"$rendered"
           grep -q "METRICS_TAG_APP: \"$sa\"" <<<"$rendered"
           strimzi="$(helm template ci "$chart" "${args[@]}" --set kafka.profile=kafka-strimzi --show-only templates/deployment.yaml)"
-          grep -A4 'name: KAFKA_TLS_CA' <<<"$strimzi" | grep -q 'name: fintechbankx-cluster-ca-cert'
+          grep -A4 'name: KAFKA_TLS_CA' <<<"$strimzi" | grep -q 'name: "fintechbankx-cluster-ca-cert"'
 
   terraform:
     name: deploy/terraform

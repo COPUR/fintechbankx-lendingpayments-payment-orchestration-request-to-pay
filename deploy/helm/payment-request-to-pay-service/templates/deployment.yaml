@@ -1,13 +1,15 @@
+{{- /* Guardrail 4a: the vendored platform guard runs once here, on every route this chart renders (rtp.guard, _helpers.tpl). */ -}}
+{{- include "rtp.guard" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "rtp.name" . }}
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "rtp.name" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "rtp.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.replicaCount | int }}
   {{- end }}
   revisionHistoryLimit: 5
   strategy:
@@ -22,26 +24,26 @@ spec:
     metadata:
       labels:
         {{- include "rtp.selectorLabels" . | nindent 8 }}
-        app: {{ .Values.serviceAccount.name }}
+        app: {{ .Values.serviceAccount.name | quote }}
         version: {{ .Values.image.tag | quote }}
         app.kubernetes.io/part-of: fintechbankx-payments
         # Observability's PodMonitor fintechbankx-services selects this label.
         fintechbankx.io/service-id: svc-pay-request-to-pay
         fintechbankx.io/app: app-pay-request-to-pay
-        fintechbankx.io/squad: {{ .Values.squad }}
+        fintechbankx.io/squad: {{ .Values.squad | quote }}
         sidecar.istio.io/inject: "true"
       annotations:
         sidecar.istio.io/inject: "true"
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | quote }}
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ .Values.service.managementPort | quote }}
         prometheus.io/path: /actuator/prometheus
-        {{- if eq .Values.kafka.profile "kafka-strimzi" }}
+        {{- if eq (include "rtp.kafkaRuntime" .) "strimzi" }}
         # Strimzi does its own mutual TLS on 9093; the sidecar must not wrap it.
         traffic.sidecar.istio.io/excludeOutboundPorts: "9093"
         {{- end }}
     spec:
-      serviceAccountName: {{ .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name | quote }}
       # Native sidecars are mesh-wide (mesh 4bf3906, istiod ENABLE_NATIVE_SIDECARS):
       # the proxy stops after the application container, so no drain annotation
       # is needed. The grace period bounds preStop 10 s +
@@ -55,13 +57,13 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               {{- include "rtp.selectorLabels" . | nindent 14 }}
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
@@ -69,15 +71,17 @@ spec:
               {{- include "rtp.selectorLabels" . | nindent 14 }}
       containers:
         - name: payment-request-to-pay-service
-          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           ports:
             - name: http
               containerPort: 8080
             - name: http-management
               containerPort: 8081
+          # The only env the chart renders: its own entries (none from values other than the
+          # guarded kafka.profile and databaseCa), then envFrom of its own ConfigMap and Secret.
           env:
-            # Exactly kafka-msk or kafka-strimzi (rtp.kafkaProfile); the local profile is never deployed.
+            # Exactly kafka-msk or kafka-strimzi (rtp.kafkaProfile, fbx.kafkaProfile); the local profile is never deployed.
             - name: SPRING_PROFILES_ACTIVE
               value: {{ include "rtp.kafkaProfile" . | quote }}
             # Migrations run only in the pre-install/pre-upgrade Job as the
@@ -87,31 +91,31 @@ spec:
             # Path of the mounted RDS CA bundle (cicd-templates 4f0f266).
             - name: DB_SSL_ROOT_CERT
               value: {{ include "rtp.databaseCaPath" . | quote }}
-            {{- if eq .Values.kafka.profile "kafka-strimzi" }}
+            {{- if eq (include "rtp.kafkaRuntime" .) "strimzi" }}
             - name: KAFKA_TLS_CERT
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafka.strimziTlsSecret }}
+                  name: {{ .Values.kafka.strimziTlsSecret | quote }}
                   key: user.crt
             - name: KAFKA_TLS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafka.strimziTlsSecret }}
+                  name: {{ .Values.kafka.strimziTlsSecret | quote }}
                   key: user.key
             # The broker is trusted through the Strimzi cluster CA (event-streaming
             # 5f7d546), not the client CA in the KafkaUser secret.
             - name: KAFKA_TLS_CA
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "kafka.strimziClusterCaSecret is required" .Values.kafka.strimziClusterCaSecret }}
+                  name: {{ required "kafka.strimziClusterCaSecret is required" .Values.kafka.strimziClusterCaSecret | quote }}
                   key: ca.crt
             {{- end }}
           envFrom:
             - configMapRef:
-                name: {{ include "rtp.name" . }}
+                name: {{ include "rtp.name" . | quote }}
             {{- if .Values.externalSecret.enabled }}
             - secretRef:
-                name: {{ include "rtp.dbSecretName" . }}
+                name: {{ include "rtp.dbSecretName" . | quote }}
             {{- end }}
           startupProbe:
             httpGet:
@@ -146,7 +150,7 @@ spec:
             - name: tmp
               mountPath: /tmp
             - name: database-ca
-              mountPath: {{ .Values.databaseCa.mountPath }}
+              mountPath: {{ .Values.databaseCa.mountPath | quote }}
               readOnly: true
       volumes:
         - name: tmp
@@ -155,7 +159,7 @@ spec:
         # stops the pod instead of letting it connect unverified.
         - name: database-ca
           configMap:
-            name: {{ .Values.databaseCa.configMapName }}
+            name: {{ .Values.databaseCa.configMapName | quote }}
             items:
-              - key: {{ .Values.databaseCa.key }}
-                path: {{ .Values.databaseCa.key }}
+              - key: {{ .Values.databaseCa.key | quote }}
+                path: {{ .Values.databaseCa.key | quote }}

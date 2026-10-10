@@ -83,22 +83,32 @@ resources set it `false`, and `TlsEnforcementTest` asserts that no other package
 
 The chart refuses every route to that switch at render time (`deploy/helm`, `deployability.yml`):
 
-- `templates/_fbx-guard.tpl` is a verbatim copy of the platform chart's guard helpers, cicd-templates `2caa48f`,
-  `charts/fintechbankx-service/templates/_helpers.tpl:70-239` (`fbx.validateJdbcUrl`, `fbx.datasourceOverrideName`,
-  `fbx.validateJvmOptions`, `fbx.validateDatabaseTls`), pinned at sha256
-  `82ea4815d60ea1a6b9393ee1ee7a0df1ac72f3671d67e88c1ddc74b0759dfd4f`; `deploy/helm` fails when the copy differs.
-  It parses `config.DB_URL` as PgJDBC does (exactly one `sslmode=verify-full`, exactly one `sslrootcert` equal to
-  the mounted RDS CA bundle, lower-case TLS keys, no bypass parameter, no percent-encoded `=` or `&`, no TLS key
-  before the `?`), refuses the `spring.datasource|flyway|liquibase|r2dbc.*`, `spring.application.json`,
-  `*jdbc_url*`, `*sslfactory*`, `*sslhostnameverifier*`, `spring.config.*` and `spring.profiles.active|include`
-  names, and checks `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` and `_JAVA_OPTIONS` values.
-- `templates/_helpers.tpl` adds this chart's rules (`rtp.guardValues`): `kafka.profile` must be exactly `kafka-msk`
-  or `kafka-strimzi` (no `local`, no list); `config` keys are normalised as Spring's relaxed binding reads them
-  and refused by prefix (`spring.config|profiles|datasource|flyway|liquibase|r2dbc|application.json` with any
-  suffix, indexed `_0`, `DEFAULT`, `GROUP_*` and `NAME` forms included, except `SPRING_DATASOURCE_USERNAME` /
-  `_PASSWORD`; `fintechbankx.tls.*`; `spring.kafka.*security.protocol`; `spring.kafka.properties.*`);
-  `KAFKA_SECURITY_PROTOCOL` must be `SASL_SSL` or `SSL`; JVM option values may not mention `fintechbankx` or
-  `kafka`; `extraEnv` is not supported (Kubernetes `env` would win over the ConfigMap).
+- `templates/_fbx_helpers.tpl` is the platform chart's helper file, vendored unchanged (its README, "Vendoring
+  the guard", is the contract): repo `fintechbankx-platform-delivery-iac-cicd-templates`, commit `a4f0072`, path
+  `charts/fintechbankx-service/templates/_helpers.tpl`, sha256
+  `1fd684735383301baf3052c5d8978dd86edee1ac1c66ebfb944a8a6a166f4c92`; `deploy/helm` runs `sha256sum -c --strict`
+  on it. `rtp.guard` (`templates/_helpers.tpl`) calls `fbx.guard` once at the top of the Deployment and of the
+  migration Job with an adapter dict that maps every route this chart renders: `config`, `extraEnv` / `envFrom` /
+  `extraEnvFrom` (none rendered; refused when set), `databaseCa` (always enabled), `kafka.runtime` from
+  `kafka.profile` (`kafka-msk` -> `msk`, `kafka-strimzi` -> `strimzi`, anything else fails) and the fixed
+  ExternalSecret keys (`SPRING_DATASOURCE_PASSWORD`; `DB_MIGRATION_USERNAME` / `_PASSWORD` as `extraData`;
+  `dataFrom` refused). `fbx.guard` parses `config.DB_URL` as PgJDBC does (exactly one `sslmode=verify-full`,
+  exactly one `sslrootcert` equal to the mounted bundle, lower-case TLS keys, no bypass parameter, no
+  percent-encoding, no TLS key before the `?`, no `${...}` or `$(...)`), refuses the override names in any
+  relaxed-binding spelling (`spring.datasource|flyway|liquibase|r2dbc.*`, `spring.application.json`,
+  `*jdbc_url*`, `*ssl_factory*`, `*ssl_hostname_verifier*`, `*ssl_password_callback*`, `*ssl_root_cert*`,
+  `*ssl_mode*`, `spring.config.*`, `spring.profiles.*`, `spring.ssl.*`, `*ssl_bundle*`, `fintechbankx.tls.*`,
+  `DB_URL` in another spelling), requires `*SECURITY_PROTOCOL` values to match the runtime (`SASL_SSL` for
+  `kafka-msk`, `SSL` for `kafka-strimzi`) and endpoint identification to stay `https`, checks
+  `JAVA_TOOL_OPTIONS` / `JDK_JAVA_OPTIONS` / `_JAVA_OPTIONS` values, and refuses keys that are not ConfigMap or
+  Secret keys. `SPRING_PROFILES_ACTIVE` is rendered through `fbx.kafkaProfile`.
+- `templates/_helpers.tpl` keeps only what `fbx.guard` does not do (`rtp.guardConfigName`): `spring.kafka.properties.*`
+  names are refused (the common client map), JVM option values may not mention `fintechbankx` or `kafka` at all,
+  and `extraEnv` fails the render because this chart renders none.
+- Every key and value the templates interpolate into the ConfigMap, the ExternalSecrets and the pod specs is
+  quoted (`{{ $key | quote }}: {{ $value | quote }}`, `secretKey`, `property`, `remoteRef.key`, env values,
+  Secret and ConfigMap names, labels), numbers go through `int`, and `deploy/helm` proves that a config key or
+  value containing a newline cannot add a key the guard never saw.
 
 ### AsyncAPI gate
 

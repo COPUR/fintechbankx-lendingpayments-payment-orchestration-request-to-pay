@@ -1,0 +1,7 @@
+# Profile local (SPRING_PROFILES_ACTIVE=local): a developer's PostgreSQL and Kafka on
+# localhost without TLS. The only runtime configuration that switches the startup TLS
+# assertion (TlsEnforcement) off. The chart activates kafka-msk or kafka-strimzi, never
+# this profile, and never sets the property.
+fintechbankx:
+  tls:
+    enforce: false

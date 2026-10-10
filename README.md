@@ -50,7 +50,7 @@ Status: **Proposed** until the Recurring and Bulk Payments Squad merges and rele
 | What | Command / path |
 |---|---|
 | Unit, architecture and integration tests | `./gradlew check` (PostgreSQL integration tests need `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`; they skip locally without it and fail when `CI=true`) |
-| Run locally | `SPRING_DATASOURCE_PASSWORD=... ./gradlew :open-finance-bootstrap:bootRun` (PostgreSQL on localhost:5432, database `db_pay_request_to_pay_local`) |
+| Run locally | `SPRING_PROFILES_ACTIVE=local SPRING_DATASOURCE_PASSWORD=... ./gradlew :open-finance-bootstrap:bootRun` (PostgreSQL on localhost:5432, database `db_pay_request_to_pay_local`; the `local` profile is the only runtime configuration that switches the startup TLS assertion off) |
 | Database migrations | `open-finance-infrastructure/src/main/resources/db/migration` (schema `sc_pay_request_to_pay`) |
 | Container image | `docker build -t payment-request-to-pay-service .` |
 | Kubernetes | `deploy/helm/payment-request-to-pay-service` (namespace `payments`) |
@@ -67,6 +67,16 @@ A token without the claim, or with another value, is 403. The realm's default cl
 `fbx-client-type-open-finance-tpp` emits it on every open-finance TPP client (identity realm-as-code,
 Proposed). Service clients (`svc-*`) and the first-party channels are refused even with the claim. Which
 TPPs reach the service during the cut-over is decided at the gateway (cohort `rtp-cutover-cohort`), not here.
+
+### Startup TLS assertion
+
+The service stops at startup (`TlsEnforcement`, before any bean is created) unless `spring.datasource.url`
+(and `spring.flyway.url` when set) carries `sslmode=verify-full` and, when a Kafka client is configured, the
+producer's `security.protocol` is `SASL_SSL` (`SSL` is accepted for the `kafka-strimzi` mutual-TLS profile). The
+migration Job checks its database URL the same way. `fintechbankx.tls.enforce` is `true` in `application.yml`;
+only the `local` profile and the bootstrap test resources set it `false`, and the chart refuses
+`FINTECHBANKX_TLS_ENFORCE`, `SPRING_CONFIG_IMPORT` / `_LOCATION` / `_ADDITIONAL_LOCATION`, `SPRING_DATASOURCE_URL`,
+`SPRING_DATASOURCE_HIKARI_JDBC_URL` and `SPRING_FLYWAY_URL` as `config` keys in any case (`rtp.guardEnvKeys`).
 
 ### AsyncAPI gate
 

@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.context.annotation.Import;
 
 import java.util.Arrays;
 
@@ -52,8 +53,13 @@ public class RequestToPayApplication {
         }
     }
 
-    /** Not a component (no stereotype), so the service's component scan never picks it up. */
+    /**
+     * Not a component (no stereotype), so the service's component scan never picks it up; the
+     * startup TLS assertion is imported by hand for the same reason (the Job's DB_URL must be
+     * verify-full too).
+     */
     @ImportAutoConfiguration({DataSourceAutoConfiguration.class, FlywayAutoConfiguration.class})
+    @Import(TlsEnforcement.class)
     static class DatabaseMigration {
     }
 }

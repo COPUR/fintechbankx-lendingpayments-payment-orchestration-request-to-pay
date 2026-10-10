@@ -67,6 +67,38 @@ Usage: include "rtp.remoteKey" (list "externalSecret.remoteSecretName" .Values.e
 {{- $key -}}
 {{- end -}}
 
+{{- /*
+Environment keys values may never inject (governance round 3, answer 2b):
+  - SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION, SPRING_CONFIG_ADDITIONAL_LOCATION:
+    Spring's configuration is not redirected from values. A configtree is only
+    ever a value this chart renders itself, on the fixed mount
+    optional:configtree:/etc/fintechbankx/config/ (this chart renders none today).
+  - SPRING_DATASOURCE_URL, SPRING_DATASOURCE_HIKARI_JDBC_URL, SPRING_FLYWAY_URL:
+    the database URL is config.DB_URL, checked for sslmode=verify-full in
+    configmap.yaml; these would replace it behind that check.
+  - FINTECHBANKX_TLS_ENFORCE: the chart never switches the startup TLS
+    assertion off (local and test configuration only).
+Keys are matched whatever their case and separator (spring.config.import,
+Spring_Config_Import, ...), as Spring binds them. The chart has no extraEnv;
+whoever adds one passes its names through this helper as well.
+Usage: include "rtp.guardEnvKeys" (list "config" (keys .Values.config))
+*/ -}}
+{{- define "rtp.guardEnvKeys" -}}
+{{- $source := index . 0 -}}
+{{- range $key := index . 1 -}}
+{{- $k := $key | toString | lower | replace "." "_" | replace "-" "_" -}}
+{{- if regexMatch "^spring_config_(import|location|additional_location)$" $k -}}
+{{- fail (printf "%s.%s is not allowed: Spring configuration is not redirected from values (a configtree is only the chart's own optional:configtree:/etc/fintechbankx/config/)" $source $key) -}}
+{{- end -}}
+{{- if regexMatch "^(spring_datasource_url|spring_datasource_hikari_jdbc_url|spring_flyway_url)$" $k -}}
+{{- fail (printf "%s.%s is not allowed: the database URL is config.DB_URL (sslmode=verify-full is checked there)" $source $key) -}}
+{{- end -}}
+{{- if eq $k "fintechbankx_tls_enforce" -}}
+{{- fail (printf "%s.%s is not allowed: the chart never switches the startup TLS assertion off" $source $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- /* Path of the mounted RDS CA bundle (cicd-templates 4f0f266). */ -}}
 {{- define "rtp.databaseCaPath" -}}
 {{- printf "%s/%s" (trimSuffix "/" .Values.databaseCa.mountPath) .Values.databaseCa.key -}}

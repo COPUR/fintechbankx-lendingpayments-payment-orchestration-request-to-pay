@@ -76,6 +76,19 @@ jobs:
               echo "chart rendered DB_URL $url" >&2; exit 1
             fi
           done
+          # Governance round 3 (2b): no value may redirect Spring's configuration (a configtree is only
+          # ever the chart's own optional:configtree:/etc/fintechbankx/config/), replace the database
+          # URL behind the verify-full check, or switch the startup TLS assertion off, whatever the
+          # case of the key (rtp.guardEnvKeys).
+          for key in SPRING_CONFIG_IMPORT spring_config_import Spring_Config_Location SPRING_CONFIG_ADDITIONAL_LOCATION \
+                     SPRING_DATASOURCE_URL SPRING_DATASOURCE_HIKARI_JDBC_URL SPRING_FLYWAY_URL FINTECHBANKX_TLS_ENFORCE; do
+            if helm template ci "$chart" "${args[@]}" --set-string "config.$key=x" > /dev/null 2>&1; then
+              echo "chart rendered with config.$key" >&2; exit 1
+            fi
+          done
+          if ! helm template ci "$chart" "${args[@]}" --set-string config.DB_POOL_MIN_IDLE=2 > /dev/null; then
+            echo "the env-key guard rejected an ordinary config key" >&2; exit 1
+          fi
 
           # Flyway runs only in the hook Job, as the schema owner; the pods never get that secret.
           job="$(helm template ci "$chart" "${args[@]}" --show-only templates/migration-job.yaml)"

@@ -48,6 +48,11 @@ kafka:
   strimziClusterCaSecret: fintechbankx-cluster-ca-cert
 
 # Non-secret runtime settings, rendered into a ConfigMap. The first four are required.
+# Rendering fails for SPRING_CONFIG_IMPORT / _LOCATION / _ADDITIONAL_LOCATION,
+# SPRING_DATASOURCE_URL, SPRING_DATASOURCE_HIKARI_JDBC_URL, SPRING_FLYWAY_URL and
+# FINTECHBANKX_TLS_ENFORCE in any case (templates/_helpers.tpl, rtp.guardEnvKeys):
+# the service asserts TLS at startup (sslmode=verify-full, Kafka SASL_SSL) and the
+# chart never switches that off.
 config:
   # jdbc:postgresql://<aurora-writer>:5432/db_pay_request_to_pay_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
   # (deploy/terraform output jdbc_url); any other sslmode or sslrootcert fails the render.

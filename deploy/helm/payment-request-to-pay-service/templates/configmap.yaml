@@ -4,6 +4,8 @@
 {{- if and $dbUrl (not (and (contains "sslmode=verify-full" $dbUrl) (contains $rootcert $dbUrl))) }}
 {{- fail (printf "config.DB_URL must use sslmode=verify-full&%s (mounted ConfigMap %s)" $rootcert .Values.databaseCa.configMapName) }}
 {{- end }}
+{{- /* No value may redirect Spring's configuration, replace the database URL or switch the TLS assertion off. */ -}}
+{{- include "rtp.guardEnvKeys" (list "config" (keys .Values.config)) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

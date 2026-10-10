@@ -39,7 +39,9 @@ podDisruptionBudget:
 squad: payments
 
 kafka:
-  # kafka-msk (Amazon MSK, IAM auth via IRSA) or kafka-strimzi (in-cluster, TLS client certificate).
+  # Exactly kafka-msk (Amazon MSK, IAM auth via IRSA) or kafka-strimzi (in-cluster, TLS client
+  # certificate); rendered as SPRING_PROFILES_ACTIVE. Any other value, a list or an empty value
+  # fails the render: the image's local profile switches the startup TLS assertion off.
   profile: kafka-msk
   # KafkaUser secret with user.crt and user.key (kafka-strimzi only).
   strimziTlsSecret: kafka-client-tls
@@ -48,14 +50,24 @@ kafka:
   strimziClusterCaSecret: fintechbankx-cluster-ca-cert
 
 # Non-secret runtime settings, rendered into a ConfigMap. The first four are required.
-# Rendering fails for SPRING_CONFIG_IMPORT / _LOCATION / _ADDITIONAL_LOCATION,
-# SPRING_DATASOURCE_URL, SPRING_DATASOURCE_HIKARI_JDBC_URL, SPRING_FLYWAY_URL and
-# FINTECHBANKX_TLS_ENFORCE in any case (templates/_helpers.tpl, rtp.guardEnvKeys):
-# the service asserts TLS at startup (sslmode=verify-full, Kafka SASL_SSL) and the
-# chart never switches that off.
+# Guardrail 4a (templates/_helpers.tpl rtp.guardValues, templates/_fbx-guard.tpl
+# vendored from cicd-templates 2caa48f): rendering fails for any key Spring would
+# read as spring.config.*, spring.profiles.*, spring.datasource.* (USERNAME and
+# PASSWORD excepted), spring.flyway.*, spring.liquibase.*, spring.r2dbc.*,
+# spring.application.json, fintechbankx.tls.*, spring.kafka.*security.protocol or
+# spring.kafka.properties.*, in any case or separator, indexed forms included; for
+# a *JDBC_URL*, *SSLFACTORY* or *SSLHOSTNAMEVERIFIER* name; for a JAVA_TOOL_OPTIONS,
+# JDK_JAVA_OPTIONS or _JAVA_OPTIONS value that mentions datasource, flyway,
+# liquibase, r2dbc, jdbc, ssl, application.json, spring.config, spring.profiles,
+# fintechbankx or kafka, or reads options from a file; and for
+# KAFKA_SECURITY_PROTOCOL other than SASL_SSL or SSL. The service asserts TLS at
+# startup (sslmode=verify-full, Kafka SASL_SSL or SSL) and the chart never
+# switches that off. There is no extraEnv.
 config:
   # jdbc:postgresql://<aurora-writer>:5432/db_pay_request_to_pay_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
-  # (deploy/terraform output jdbc_url); any other sslmode or sslrootcert fails the render.
+  # (deploy/terraform output jdbc_url). Parsed as PgJDBC reads it: exactly one sslmode=verify-full,
+  # exactly one sslrootcert equal to the mounted bundle, lower-case keys, no sslfactory /
+  # sslfactoryarg / sslhostnameverifier / sslpasswordcallback / service; anything else fails the render.
   DB_URL: ""
   KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam (port 9098)
   OIDC_ISSUER_URI: ""             # https://<identity-host>/realms/fintechbankx

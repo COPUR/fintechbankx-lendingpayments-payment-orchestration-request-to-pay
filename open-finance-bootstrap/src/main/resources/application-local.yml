@@ -1,7 +1,10 @@
 # Profile local (SPRING_PROFILES_ACTIVE=local): a developer's PostgreSQL and Kafka on
-# localhost without TLS. The only runtime configuration that switches the startup TLS
-# assertion (TlsEnforcement) off. The chart activates kafka-msk or kafka-strimzi, never
-# this profile, and never sets the property.
+# localhost without TLS, and regression's local parity runs. The only packaged configuration
+# that switches the startup TLS assertion (TlsEnforcement) off (TlsEnforcementTest checks the
+# other application-*.yml). The chart cannot activate it: kafka.profile must be exactly
+# kafka-msk or kafka-strimzi, every spring.profiles.* / spring.config.* / fintechbankx.tls.*
+# config key is refused by regex, and JVM options naming them are refused
+# (deploy/helm templates/_helpers.tpl, deployability.yml).
 fintechbankx:
   tls:
     enforce: false

@@ -50,7 +50,7 @@ Status: **Proposed** until the Recurring and Bulk Payments Squad merges and rele
 | What | Command / path |
 |---|---|
 | Unit, architecture and integration tests | `./gradlew check` (PostgreSQL integration tests need `TEST_DB_URL`, `TEST_DB_USERNAME`, `TEST_DB_PASSWORD`; they skip locally without it and fail when `CI=true`) |
-| Run locally | `SPRING_PROFILES_ACTIVE=local SPRING_DATASOURCE_PASSWORD=... ./gradlew :open-finance-bootstrap:bootRun` (PostgreSQL on localhost:5432, database `db_pay_request_to_pay_local`; the `local` profile is the only runtime configuration that switches the startup TLS assertion off) |
+| Run locally | `SPRING_PROFILES_ACTIVE=local SPRING_DATASOURCE_PASSWORD=... ./gradlew :open-finance-bootstrap:bootRun` (PostgreSQL on localhost:5432, database `db_pay_request_to_pay_local`; the `local` profile is the only packaged configuration that switches the startup TLS assertion off, and the chart refuses every route to it, see "Startup TLS assertion") |
 | Database migrations | `open-finance-infrastructure/src/main/resources/db/migration` (schema `sc_pay_request_to_pay`) |
 | Container image | `docker build -t payment-request-to-pay-service .` |
 | Kubernetes | `deploy/helm/payment-request-to-pay-service` (namespace `payments`) |
@@ -70,13 +70,35 @@ TPPs reach the service during the cut-over is decided at the gateway (cohort `rt
 
 ### Startup TLS assertion
 
-The service stops at startup (`TlsEnforcement`, before any bean is created) unless `spring.datasource.url`
-(and `spring.flyway.url` when set) carries `sslmode=verify-full` and, when a Kafka client is configured, the
-producer's `security.protocol` is `SASL_SSL` (`SSL` is accepted for the `kafka-strimzi` mutual-TLS profile). The
-migration Job checks its database URL the same way. `fintechbankx.tls.enforce` is `true` in `application.yml`;
-only the `local` profile and the bootstrap test resources set it `false`, and the chart refuses
-`FINTECHBANKX_TLS_ENFORCE`, `SPRING_CONFIG_IMPORT` / `_LOCATION` / `_ADDITIONAL_LOCATION`, `SPRING_DATASOURCE_URL`,
-`SPRING_DATASOURCE_HIKARI_JDBC_URL` and `SPRING_FLYWAY_URL` as `config` keys in any case (`rtp.guardEnvKeys`).
+The service stops at startup (`TlsEnforcement`, before any bean is created) unless every datasource URL a pool
+can use (`spring.datasource.url`, and `spring.datasource.hikari.jdbc-url` and `spring.flyway.url` when set)
+carries `sslmode=verify-full` and, when a Kafka client is configured, the producer's effective `security.protocol`
+(after `spring.kafka.properties` and `spring.kafka.producer.properties`) is `SASL_SSL` (`SSL` is accepted for the
+`kafka-strimzi` mutual-TLS profile). Each URL is read the way PgJDBC reads it: parameter names are case-sensitive
+(`SSLMODE` is ignored by the driver, so it counts as no sslmode) and a repeated parameter keeps its last value, so
+a repeated `sslmode` or `sslrootcert` is refused, as are `sslfactory`, `sslfactoryarg`, `sslhostnameverifier`,
+`sslpasswordcallback` and `service`. The migration Job (`migrate`) imports the same check. `fintechbankx.tls.enforce`
+is `true` in `application.yml`; only the `local` profile (regression's local parity runs) and the bootstrap test
+resources set it `false`, and `TlsEnforcementTest` asserts that no other packaged `application-*.yml` does.
+
+The chart refuses every route to that switch at render time (`deploy/helm`, `deployability.yml`):
+
+- `templates/_fbx-guard.tpl` is a verbatim copy of the platform chart's guard helpers, cicd-templates `2caa48f`,
+  `charts/fintechbankx-service/templates/_helpers.tpl:70-239` (`fbx.validateJdbcUrl`, `fbx.datasourceOverrideName`,
+  `fbx.validateJvmOptions`, `fbx.validateDatabaseTls`), pinned at sha256
+  `82ea4815d60ea1a6b9393ee1ee7a0df1ac72f3671d67e88c1ddc74b0759dfd4f`; `deploy/helm` fails when the copy differs.
+  It parses `config.DB_URL` as PgJDBC does (exactly one `sslmode=verify-full`, exactly one `sslrootcert` equal to
+  the mounted RDS CA bundle, lower-case TLS keys, no bypass parameter, no percent-encoded `=` or `&`, no TLS key
+  before the `?`), refuses the `spring.datasource|flyway|liquibase|r2dbc.*`, `spring.application.json`,
+  `*jdbc_url*`, `*sslfactory*`, `*sslhostnameverifier*`, `spring.config.*` and `spring.profiles.active|include`
+  names, and checks `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` and `_JAVA_OPTIONS` values.
+- `templates/_helpers.tpl` adds this chart's rules (`rtp.guardValues`): `kafka.profile` must be exactly `kafka-msk`
+  or `kafka-strimzi` (no `local`, no list); `config` keys are normalised as Spring's relaxed binding reads them
+  and refused by prefix (`spring.config|profiles|datasource|flyway|liquibase|r2dbc|application.json` with any
+  suffix, indexed `_0`, `DEFAULT`, `GROUP_*` and `NAME` forms included, except `SPRING_DATASOURCE_USERNAME` /
+  `_PASSWORD`; `fintechbankx.tls.*`; `spring.kafka.*security.protocol`; `spring.kafka.properties.*`);
+  `KAFKA_SECURITY_PROTOCOL` must be `SASL_SSL` or `SSL`; JVM option values may not mention `fintechbankx` or
+  `kafka`; `extraEnv` is not supported (Kubernetes `env` would win over the ConfigMap).
 
 ### AsyncAPI gate
 

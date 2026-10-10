@@ -94,7 +94,8 @@ DeadLetterHeaders:
   type: object
   description: >-
     Headers added by the consumer that moves a poison message to the
-    namespace DLQ after bounded retries. The original record value and key are
+    DLQ in the consumer's own namespace (consumer-owned DLQ, ADR-019) after
+    bounded retries. The original record value and key are
     copied unchanged.
   required:
     - eventType
@@ -114,16 +115,20 @@ DeadLetterHeaders:
     dlq-original-topic:
       type: string
     dlq-original-partition:
-      type: integer
+      type: string
+      pattern: '^[0-9]+$'
+      description: Decimal text. Kafka header values are bytes; every dead-letter header is UTF-8 text.
     dlq-original-offset:
-      type: integer
-      format: int64
+      type: string
+      pattern: '^[0-9]+$'
+      description: Decimal text.
     dlq-consumer-group:
       type: string
       description: 'Consumer group that gave up, cg.<service-id>.<purpose>.v<major>.'
     dlq-attempts:
-      type: integer
-      minimum: 1
+      type: string
+      pattern: '^[1-9][0-9]*$'
+      description: Decimal text, at least 1.
     dlq-error-class:
       type: string
       description: Exception class or error code. Never the message text if it can contain personal data.

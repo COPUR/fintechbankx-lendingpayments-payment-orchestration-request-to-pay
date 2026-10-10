@@ -205,7 +205,9 @@ class RequestToPayServiceIT {
                 select topic, event_type, aggregate_version, correlation_id, payload::text as payload, status
                 from sc_pay_request_to_pay.outbox_event order by created_seq""");
         assertThat(events).extracting(e -> e.get("topic"))
-                .containsExactly("evt.pay.rtp.created.v1", "evt.pay.rtp.accepted.v1");
+                .containsExactly("evt.pay.rtp.v1", "evt.pay.rtp.v1");
+        assertThat(events).extracting(e -> e.get("event_type"))
+                .containsExactly("Payments.PayRequest.Created.v1", "Payments.PayRequest.Accepted.v1");
         assertThat(events).extracting(e -> ((Number) e.get("aggregate_version")).longValue()).containsExactly(0L, 1L);
         assertThat(events).extracting(e -> e.get("correlation_id")).containsExactly("ix-create", "ix-accept");
         JsonNode accepted = json.readTree((String) events.get(1).get("payload"));
@@ -405,8 +407,17 @@ class RequestToPayServiceIT {
 
         org.mockito.ArgumentCaptor<ProducerRecord<String, String>> sent = org.mockito.ArgumentCaptor.forClass(ProducerRecord.class);
         Mockito.verify(kafka).send(sent.capture());
-        assertThat(sent.getValue().topic()).isEqualTo("evt.pay.rtp.created.v1");
+        // One topic per aggregate (ADR-019): evt.pay.rtp.v1, key = aggregateId, required headers = envelope.
+        assertThat(sent.getValue().topic()).isEqualTo("evt.pay.rtp.v1");
         assertThat(sent.getValue().key()).isEqualTo(consentId);
+        JsonNode envelope = json.readTree(sent.getValue().value());
+        assertThat(envelope.get("aggregateId").asText()).isEqualTo(consentId);
+        assertThat(recordHeader(sent.getValue(), "eventType")).isEqualTo(envelope.get("eventType").asText())
+                .isEqualTo("Payments.PayRequest.Created.v1");
+        assertThat(recordHeader(sent.getValue(), "eventId")).isEqualTo(envelope.get("eventId").asText());
+        assertThat(recordHeader(sent.getValue(), "correlationId")).isEqualTo(envelope.get("correlationId").asText())
+                .isEqualTo("ix-relay");
+        assertThat(recordHeader(sent.getValue(), "x-fapi-interaction-id")).isEqualTo("ix-relay");
         assertThat(outbox.countByStatus(OutboxEventJpaEntity.Status.PUBLISHED)).isEqualTo(1);
         assertThat(outbox.countByStatus(OutboxEventJpaEntity.Status.PENDING)).isZero();
     }
@@ -638,5 +649,10 @@ class RequestToPayServiceIT {
 
     private long count(String table) {
         return jdbc.queryForObject("select count(*) from " + SCHEMA + "." + table, Long.class);
+    }
+
+    private static String recordHeader(ProducerRecord<String, String> record, String name) {
+        var header = record.headers().lastHeader(name);
+        return header == null ? null : new String(header.value(), java.nio.charset.StandardCharsets.UTF_8);
     }
 }

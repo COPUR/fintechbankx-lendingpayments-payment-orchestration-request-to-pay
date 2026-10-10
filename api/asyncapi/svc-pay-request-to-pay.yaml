@@ -1,7 +1,9 @@
 # AsyncAPI contract for svc-pay-request-to-pay.
 # Status: Proposed. Provider copy (this repository owns it); the asyncapi catalog mirrors it.
-# Naming: docs/NAMING_CONVENTION_DDD_EDA_BUSINESS_CONTEXT.md
-# Validate: npx -y @asyncapi/cli@2.13.0 validate asyncapi/svc-pay-request-to-pay.yaml
+# Channels and messages follow asyncapi catalog 44837cc (one topic per aggregate, ADR-019); info, servers and the
+# data schemas are this provider's own.
+# Naming: docs/NAMING_CONVENTION_DDD_EDA_BUSINESS_CONTEXT.md (asyncapi catalog)
+# Validate: npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-pay-request-to-pay.yaml
 asyncapi: 3.0.0
 id: urn:fintechbankx:asyncapi:svc-pay-request-to-pay
 info:
@@ -14,13 +16,15 @@ info:
 
     Implementation status: written by the transactional outbox (OutboxPayRequestEventPublisher, table sc_pay_request_to_pay.outbox_event) in the pay request's transaction and relayed by OutboxRelay (one active relay per service, per-aggregate order). Relay failures follow ADR-021 decision 4: a payload error (RecordTooLarge, Serialization, InvalidTopic) parks the row and its aggregate's later events wait until an operator replays it; every other error stops the relay without marking anything and it retries with backoff. Consumers never see an aggregate's events out of order, but a parked event delays the later events of that pay request. The legacy topic rtp.pay_requests.v1 is no longer published: its publisher could not start (no runnable application, two competing notification beans), so no consumer ever received it and no dual-publish window is needed. Envelope shape is pinned by PayRequestEventEnvelopeFactoryTest.
 
-    Every message uses the standard envelope (common/event-envelope.yaml). Record key is the aggregateId. Topics use cleanup.policy=delete. Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
+    One topic per aggregate (ADR-019, owner decision 2026-10-08): every event of the PayRequest aggregate goes to evt.pay.rtp.v1, keyed by the aggregateId (UTF-8 text) so one pay request's events stay in order in one partition, and is named by its eventType (Payments.PayRequest.<Event>.v1) in the envelope and in the eventType record header. Every record carries the UTF-8 headers eventType, eventId and correlationId (equal to the envelope's) and x-fapi-interaction-id (every flow starts at the FAPI API; the correlationId is that interaction id), plus traceparent when the request was traced. Consumers skip event types they do not handle. Every message uses the standard envelope (common/event-envelope.yaml). The topic uses cleanup.policy=delete. Adding an optional field or a new event type is a minor change; a removal, rename or type change in one event is a new event major (eventType ...v2) published on the same topic alongside the old one until consumers move (ADR-019 section 5). Pre-release 1.0.0: not on the asyncapi catalog's main.
+
+    Semantics the catalog messages do not spell out: PayRequestAccepted means the requesting TPP reported acceptance with paymentId X (request status CONSUMED); this service does not verify the debtor's authorisation or that payment X exists, so consumers must not treat it as the debtor's consent or as proof of a payment. PayRequestRejected means the requesting TPP reported that the debtor declined. The record key is the pay request id (see the identifier note), not a consent id.
 
     Mapping notes: Source record fields eventId, aggregateId and occurredOn move to the envelope (eventId, aggregateId, occurredAt). The record field version is a schema version (always 1) and is carried by the eventType suffix, not by aggregateVersion.
 
     Identifier note: aggregateId (the record key) is the pay request's id, published on the TPP API as Data.ConsentId under /open-finance/v1/payment-consents/{consentId} for monolith compatibility. It is a pay-request id local to evt.pay.rtp, minted by this service. It is not a consent of svc-of-consent-authorization (evt.of.consent): do not look it up there or correlate it with consent events.
 
-    Dead letters: this service consumes no topic, so it has no dead-letter topic. A consumer of evt.pay.rtp.* that gives up on a message writes it to its own <consumer namespace>.dlq.v1, declared in its own AsyncAPI (ADR-019, platform contract "Dead-letter topics").
+    Dead letters: this service consumes no topic, so it has no dead-letter topic. A consumer of evt.pay.rtp.v1 that gives up on a message writes it to its own <consumer namespace>.dlq.v1, declared in its own AsyncAPI (ADR-019, platform contract "Dead-letter topics").
   tags:
   - name: payments
   - name: evt.pay.rtp
@@ -51,54 +55,23 @@ servers:
     security:
     - $ref: '#/components/securitySchemes/mtls'
 channels:
-  created:
-    address: evt.pay.rtp.created.v1
-    title: evt.pay.rtp.created.v1
-    description: Payments.PayRequest.Created.v1. A request to pay was created for the debtor.
+  rtp:
+    address: evt.pay.rtp.v1
+    title: evt.pay.rtp.v1
+    description: 'Every event of the rtp aggregate, keyed by aggregateId so that the events of one aggregate instance stay
+      in order in one partition (ADR-019, one topic per aggregate). The eventType record header names the event:
+      Payments.PayRequest.Created.v1, Payments.PayRequest.Accepted.v1, Payments.PayRequest.Rejected.v1. Consumers skip
+      event types they do not handle.'
     messages:
       PayRequestCreated:
         $ref: '#/components/messages/PayRequestCreated'
-    bindings:
-      kafka:
-        topic: evt.pay.rtp.created.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  accepted:
-    address: evt.pay.rtp.accepted.v1
-    title: evt.pay.rtp.accepted.v1
-    description: Payments.PayRequest.Accepted.v1. The requesting TPP reported acceptance of the request with paymentId
-      X (request status CONSUMED). This service does not verify the debtor's authorisation or that payment X exists;
-      consumers must not treat this event as the debtor's consent or as proof of a payment.
-    messages:
       PayRequestAccepted:
         $ref: '#/components/messages/PayRequestAccepted'
-    bindings:
-      kafka:
-        topic: evt.pay.rtp.accepted.v1
-        partitions: 3
-        replicas: 3
-        topicConfiguration:
-          cleanup.policy:
-          - delete
-          retention.ms: 604800000
-          max.message.bytes: 1048576
-        bindingVersion: 0.5.0
-  rejected:
-    address: evt.pay.rtp.rejected.v1
-    title: evt.pay.rtp.rejected.v1
-    description: Payments.PayRequest.Rejected.v1. The requesting TPP reported that the debtor declined the request.
-    messages:
       PayRequestRejected:
         $ref: '#/components/messages/PayRequestRejected'
     bindings:
       kafka:
-        topic: evt.pay.rtp.rejected.v1
+        topic: evt.pay.rtp.v1
         partitions: 3
         replicas: 3
         topicConfiguration:
@@ -113,31 +86,33 @@ operations:
     title: Publish Payments.PayRequest.Created.v1
     summary: svc-pay-request-to-pay publishes Payments.PayRequest.Created.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/created'
+      $ref: '#/channels/rtp'
     messages:
-    - $ref: '#/channels/created/messages/PayRequestCreated'
+    - $ref: '#/channels/rtp/messages/PayRequestCreated'
   publishPayRequestAccepted:
     action: send
     title: Publish Payments.PayRequest.Accepted.v1
     summary: svc-pay-request-to-pay publishes Payments.PayRequest.Accepted.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/accepted'
+      $ref: '#/channels/rtp'
     messages:
-    - $ref: '#/channels/accepted/messages/PayRequestAccepted'
+    - $ref: '#/channels/rtp/messages/PayRequestAccepted'
   publishPayRequestRejected:
     action: send
     title: Publish Payments.PayRequest.Rejected.v1
     summary: svc-pay-request-to-pay publishes Payments.PayRequest.Rejected.v1 through its transactional outbox.
     channel:
-      $ref: '#/channels/rejected'
+      $ref: '#/channels/rtp'
     messages:
-    - $ref: '#/channels/rejected/messages/PayRequestRejected'
+    - $ref: '#/channels/rtp/messages/PayRequestRejected'
 components:
   schemas:
     EventEnvelope:
       $ref: ./common/event-envelope.yaml#/EventEnvelope
     EventHeaders:
       $ref: ./common/event-envelope.yaml#/EventHeaders
+    DeadLetterHeaders:
+      $ref: ./common/event-envelope.yaml#/DeadLetterHeaders
     MonetaryAmount:
       $ref: ./common/event-envelope.yaml#/MonetaryAmount
     DecimalAmount:
@@ -243,7 +218,12 @@ components:
       summary: A request to pay was created for the debtor.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.PayRequest.Created.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -259,18 +239,21 @@ components:
         kafka:
           key:
             type: string
-            description: aggregateId, the pay request id (Data.ConsentId on the TPP API; local to evt.pay.rtp, not a
-              consent-authorization consent).
+            description: aggregateId (consentId of the pay request).
           bindingVersion: 0.5.0
       x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestCreatedEvent
     PayRequestAccepted:
       name: PayRequestAccepted
       title: Payments.PayRequest.Accepted.v1
-      summary: The requesting TPP reported acceptance with paymentId X (request status CONSUMED); not verified by this
-        service.
+      summary: The debtor accepted the request and a payment was created (request status CONSUMED).
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.PayRequest.Accepted.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -286,17 +269,21 @@ components:
         kafka:
           key:
             type: string
-            description: aggregateId, the pay request id (Data.ConsentId on the TPP API; local to evt.pay.rtp, not a
-              consent-authorization consent).
+            description: aggregateId (consentId of the pay request).
           bindingVersion: 0.5.0
       x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestAcceptedEvent
     PayRequestRejected:
       name: PayRequestRejected
       title: Payments.PayRequest.Rejected.v1
-      summary: The requesting TPP reported that the debtor declined the request.
+      summary: The debtor rejected the request.
       contentType: application/json
       headers:
-        $ref: '#/components/schemas/EventHeaders'
+        allOf:
+        - $ref: '#/components/schemas/EventHeaders'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.PayRequest.Rejected.v1
       payload:
         allOf:
         - $ref: '#/components/schemas/EventEnvelope'
@@ -312,16 +299,30 @@ components:
         kafka:
           key:
             type: string
-            description: aggregateId, the pay request id (Data.ConsentId on the TPP API; local to evt.pay.rtp, not a
-              consent-authorization consent).
+            description: aggregateId (consentId of the pay request).
           bindingVersion: 0.5.0
       x-source-class: com.enterprise.openfinance.requesttopay.domain.event.PayRequestRejectedEvent
+    DeadLetter:
+      name: DeadLetter
+      title: Dead letter for evt.pay.rtp
+      summary: A message from this namespace that a consumer could not process after bounded retries.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/DeadLetterHeaders'
+      payload:
+        $ref: '#/components/schemas/EventEnvelope'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: Original record key (aggregateId).
+          bindingVersion: 0.5.0
   securitySchemes:
     mskIam:
       type: userPassword
-      description: SASL_SSL with SASL mechanism AWS_MSK_IAM. There is no user or password; the client signs with the
-        AWS credentials of its IRSA role, and a topic-scoped IAM policy (terraform module msk-client-access) grants
-        produce or consume rights. AsyncAPI has no IAM scheme type, so userPassword stands for the SASL family.
+      description: SASL_SSL with SASL mechanism AWS_MSK_IAM. There is no user or password; the client signs with the AWS
+        credentials of its IRSA role, and a topic-scoped IAM policy (terraform module msk-client-access) grants produce
+        or consume rights. AsyncAPI has no IAM scheme type, so userPassword stands for the SASL family.
       x-sasl-mechanism: AWS_MSK_IAM
     mtls:
       type: X509

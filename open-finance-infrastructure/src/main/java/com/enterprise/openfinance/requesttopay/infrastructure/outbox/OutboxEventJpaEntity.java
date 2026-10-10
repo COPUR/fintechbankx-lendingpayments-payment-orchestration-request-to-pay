@@ -38,6 +38,7 @@ public class OutboxEventJpaEntity {
     @Column(name = "event_type", nullable = false, length = 128, updatable = false)
     private String eventType;
 
+    /** The aggregate topic evt.pay.rtp.v1 (V7); the relay computes it and does not read this column. */
     @Column(name = "topic", nullable = false, length = 249, updatable = false)
     private String topic;
 

@@ -279,8 +279,17 @@ public class OutboxRelay {
                 : cause.getClass().getSimpleName() + ": " + cause.getMessage();
     }
 
+    /**
+     * ADR-019 sections 1 and 3: every event of the PayRequest aggregate goes to its one
+     * topic evt.pay.rtp.v1, computed here rather than read from the row; the key is the
+     * aggregateId as UTF-8 text (the envelope's aggregateId, so one pay request's events
+     * stay in order in one partition); the eventType, eventId and correlationId headers
+     * equal the envelope's. Every flow starts at the FAPI API (the correlationId is the
+     * request's x-fapi-interaction-id), so that header is always sent; traceparent only
+     * when the request was traced.
+     */
     static ProducerRecord<String, String> toRecord(OutboxEventJpaEntity row) {
-        ProducerRecord<String, String> record = new ProducerRecord<>(row.getTopic(), row.getAggregateId(), row.getPayload());
+        ProducerRecord<String, String> record = new ProducerRecord<>(topicFor(row), row.getAggregateId(), row.getPayload());
         record.headers().add("eventType", row.getEventType().getBytes(StandardCharsets.UTF_8));
         record.headers().add("eventId", row.getEventId().toString().getBytes(StandardCharsets.UTF_8));
         record.headers().add("correlationId", row.getCorrelationId().getBytes(StandardCharsets.UTF_8));
@@ -289,5 +298,10 @@ public class OutboxRelay {
             record.headers().add("traceparent", row.getTraceparent().getBytes(StandardCharsets.UTF_8));
         }
         return record;
+    }
+
+    /** This outbox holds the PayRequest aggregate only, whose topic is evt.pay.rtp.v1. */
+    static String topicFor(OutboxEventJpaEntity row) {
+        return PayRequestEventEnvelopeFactory.TOPIC;
     }
 }

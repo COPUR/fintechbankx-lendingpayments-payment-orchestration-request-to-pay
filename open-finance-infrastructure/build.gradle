@@ -34,7 +34,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-jdbc'
     runtimeOnly 'org.postgresql:postgresql'
 
-    // Transactional outbox relay to Kafka (evt.pay.rtp.*.v1)
+    // Transactional outbox relay to Kafka (evt.pay.rtp.v1, one topic per aggregate)
     implementation 'org.springframework.kafka:spring-kafka'
     // Amazon MSK IAM authentication (SASL AWS_MSK_IAM), used by the kafka-msk profile.
     runtimeOnly('software.amazon.msk:aws-msk-iam-auth:2.2.0') {

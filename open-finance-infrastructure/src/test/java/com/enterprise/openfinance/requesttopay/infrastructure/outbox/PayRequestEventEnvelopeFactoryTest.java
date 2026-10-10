@@ -31,7 +31,7 @@ class PayRequestEventEnvelopeFactoryTest {
         OutboxEventJpaEntity row = factory.toOutboxRow(created, created.domainEvents().getFirst(), "ix-42");
         JsonNode envelope = json.readTree(row.getPayload());
 
-        assertThat(row.getTopic()).isEqualTo("evt.pay.rtp.created.v1");
+        assertThat(row.getTopic()).isEqualTo("evt.pay.rtp.v1");
         assertThat(row.getEventType()).isEqualTo("Payments.PayRequest.Created.v1");
         assertThat(row.getAggregateType()).isEqualTo("PayRequest");
         assertThat(row.getAggregateId()).isEqualTo("CONS-RTP-1");
@@ -59,7 +59,7 @@ class PayRequestEventEnvelopeFactoryTest {
         OutboxEventJpaEntity row = factory.toOutboxRow(accepted, accepted.domainEvents().getFirst(), "ix-43");
         JsonNode envelope = json.readTree(row.getPayload());
 
-        assertThat(row.getTopic()).isEqualTo("evt.pay.rtp.accepted.v1");
+        assertThat(row.getTopic()).isEqualTo("evt.pay.rtp.v1");
         assertThat(envelope.get("eventType").asText()).isEqualTo("Payments.PayRequest.Accepted.v1");
         assertThat(envelope.get("aggregateVersion").asLong()).isEqualTo(1);
         assertThat(envelope.get("data").get("paymentId").asText()).isEqualTo("PAY-9");
@@ -76,7 +76,7 @@ class PayRequestEventEnvelopeFactoryTest {
         OutboxEventJpaEntity row = factory.toOutboxRow(rejected, rejected.domainEvents().getFirst(), "ix-44");
         JsonNode envelope = json.readTree(row.getPayload());
 
-        assertThat(row.getTopic()).isEqualTo("evt.pay.rtp.rejected.v1");
+        assertThat(row.getTopic()).isEqualTo("evt.pay.rtp.v1");
         assertThat(envelope.get("eventType").asText()).isEqualTo("Payments.PayRequest.Rejected.v1");
         assertThat(envelope.get("data").get("actorClientId").asText()).isEqualTo("TPP-001");
         assertThat(envelope.get("data").get("reason").asText()).isEqualTo("debtor declined");

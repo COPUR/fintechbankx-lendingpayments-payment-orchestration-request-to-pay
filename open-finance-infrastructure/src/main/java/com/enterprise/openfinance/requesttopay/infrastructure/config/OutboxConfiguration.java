@@ -85,7 +85,7 @@ public class OutboxConfiguration {
     /**
      * The relay runs in every replica when enabled; a session-level advisory lock on a
      * connection of its own lets only one of them publish at a time. Off by default until
-     * the evt.pay.rtp.*.v1 topics exist and the payments owner has decided who may accept
+     * the aggregate topic evt.pay.rtp.v1 exists and the payments owner has decided who may accept
      * a pay request (OUTBOX_RELAY_ENABLED=true turns it on; runbook).
      */
     @Configuration

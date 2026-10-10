@@ -14,15 +14,18 @@ import java.util.Map;
 
 /**
  * Turns PayRequest domain events into the public envelope of the AsyncAPI
- * contract api/asyncapi/svc-pay-request-to-pay.yaml: topic
- * evt.pay.rtp.&lt;event&gt;.v1, eventType Payments.PayRequest.&lt;Event&gt;.v1,
- * amounts as decimal strings, record key = aggregateId (consentId).
+ * contract api/asyncapi/svc-pay-request-to-pay.yaml: every event of the
+ * PayRequest aggregate goes to the one aggregate topic evt.pay.rtp.v1
+ * (ADR-019, one topic per aggregate) and is named by its eventType
+ * Payments.PayRequest.&lt;Event&gt;.v1; amounts as decimal strings, record
+ * key = aggregateId (the pay request id).
  */
 public class PayRequestEventEnvelopeFactory {
 
     public static final String PRODUCER = "svc-pay-request-to-pay";
     public static final String AGGREGATE_TYPE = "PayRequest";
-    public static final String TOPIC_PREFIX = "evt.pay.rtp.";
+    /** The PayRequest aggregate's topic; the relay sends every row of this outbox to it. */
+    public static final String TOPIC = "evt.pay.rtp.v1";
 
     private final ObjectMapper objectMapper;
 
@@ -46,17 +49,17 @@ public class PayRequestEventEnvelopeFactory {
         envelope.put("data", mapped.data());
 
         return new OutboxEventJpaEntity(event.eventId(), AGGREGATE_TYPE, aggregateId, payRequest.version(),
-                mapped.eventType(), mapped.topic(), toJson(envelope), correlationId, event.occurredOn());
+                mapped.eventType(), TOPIC, toJson(envelope), correlationId, event.occurredOn());
     }
 
     static PublicEvent map(PayRequestDomainEvent event) {
         return switch (event) {
-            case PayRequestCreatedEvent e -> new PublicEvent("created", "Created", data(
+            case PayRequestCreatedEvent e -> new PublicEvent("Created", data(
                     "creditorName", e.creditorName(),
                     "amount", decimal(e.amount()),
                     "currency", e.currency(),
                     "debtorId", e.debtorId()));
-            case PayRequestAcceptedEvent e -> new PublicEvent("accepted", "Accepted", data(
+            case PayRequestAcceptedEvent e -> new PublicEvent("Accepted", data(
                     "paymentId", e.paymentId(),
                     "amount", decimal(e.amount()),
                     "currency", e.currency(),
@@ -64,7 +67,7 @@ public class PayRequestEventEnvelopeFactory {
                     "debtorId", e.debtorId(),
                     "actorClientId", e.actorClientId(),
                     "reason", e.reason()));
-            case PayRequestRejectedEvent e -> new PublicEvent("rejected", "Rejected", data(
+            case PayRequestRejectedEvent e -> new PublicEvent("Rejected", data(
                     "actorClientId", e.actorClientId(),
                     "reason", e.reason()));
         };
@@ -93,11 +96,7 @@ public class PayRequestEventEnvelopeFactory {
         }
     }
 
-    record PublicEvent(String topicSuffix, String eventName, Map<String, Object> data) {
-        String topic() {
-            return TOPIC_PREFIX + topicSuffix + ".v1";
-        }
-
+    record PublicEvent(String eventName, Map<String, Object> data) {
         String eventType() {
             return "Payments.PayRequest." + eventName + ".v1";
         }

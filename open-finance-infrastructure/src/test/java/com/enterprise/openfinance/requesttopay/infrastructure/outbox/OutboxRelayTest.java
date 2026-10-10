@@ -84,10 +84,14 @@ class OutboxRelayTest {
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
         verify(kafka, times(2)).send(records.capture());
         ProducerRecord<String, String> record = records.getAllValues().getFirst();
-        assertThat(record.topic()).isEqualTo("evt.pay.rtp.created.v1");
+        assertThat(record.topic()).isEqualTo("evt.pay.rtp.v1");
         assertThat(record.key()).isEqualTo("CONS-1");
         assertThat(new String(record.headers().lastHeader("eventType").value(), StandardCharsets.UTF_8))
                 .isEqualTo("Payments.PayRequest.Created.v1");
+        assertThat(new String(record.headers().lastHeader("eventId").value(), StandardCharsets.UTF_8))
+                .isEqualTo(first.getEventId().toString());
+        assertThat(new String(record.headers().lastHeader("correlationId").value(), StandardCharsets.UTF_8))
+                .isEqualTo("ix-1");
         assertThat(new String(record.headers().lastHeader("x-fapi-interaction-id").value(), StandardCharsets.UTF_8))
                 .isEqualTo("ix-1");
         assertThat(record.headers().lastHeader("traceparent")).isNull();
@@ -433,9 +437,45 @@ class OutboxRelayTest {
         return CompletableFuture.completedFuture(null);
     }
 
+    /**
+     * One topic per aggregate (ADR-019 sections 1 and 3): every PayRequest event type goes to
+     * evt.pay.rtp.v1, keyed by the aggregateId as UTF-8 text, with the eventType, eventId and
+     * correlationId headers; every flow starts at the FAPI API, so x-fapi-interaction-id too.
+     */
+    @Test
+    void everyPayRequestEventGoesToTheAggregateTopicKeyedByTheAggregateIdWithTheRequiredHeaders() {
+        for (String eventType : List.of("Payments.PayRequest.Created.v1", "Payments.PayRequest.Accepted.v1",
+                "Payments.PayRequest.Rejected.v1")) {
+            OutboxEventJpaEntity row = new OutboxEventJpaEntity(UUID.randomUUID(), "PayRequest", "CONS-9", 1,
+                    eventType, "evt.pay.rtp.v1", "{}", "ix-9", NOW);
+
+            ProducerRecord<String, String> record = OutboxRelay.toRecord(row);
+
+            assertThat(record.topic()).as(eventType).isEqualTo("evt.pay.rtp.v1");
+            assertThat(record.key()).as(eventType).isEqualTo("CONS-9");
+            assertThat(header(record, "eventType")).isEqualTo(eventType);
+            assertThat(header(record, "eventId")).isEqualTo(row.getEventId().toString());
+            assertThat(header(record, "correlationId")).isEqualTo("ix-9");
+            assertThat(header(record, "x-fapi-interaction-id")).isEqualTo("ix-9");
+        }
+    }
+
+    /** The relay computes the topic from the aggregate; it does not trust the stored per-row topic. */
+    @Test
+    void theTopicIsComputedFromTheAggregateNotReadFromTheRow() {
+        OutboxEventJpaEntity row = new OutboxEventJpaEntity(UUID.randomUUID(), "PayRequest", "CONS-10", 1,
+                "Payments.PayRequest.Accepted.v1", "stored-topic-is-ignored", "{}", "ix-10", NOW);
+
+        assertThat(OutboxRelay.toRecord(row).topic()).isEqualTo("evt.pay.rtp.v1");
+    }
+
+    private static String header(ProducerRecord<String, String> record, String name) {
+        return new String(record.headers().lastHeader(name).value(), StandardCharsets.UTF_8);
+    }
+
     private static OutboxEventJpaEntity row(String aggregateId, long version) {
         return new OutboxEventJpaEntity(UUID.randomUUID(), "PayRequest", aggregateId, version,
-                "Payments.PayRequest.Created.v1", "evt.pay.rtp.created.v1", "{}", "ix-1", NOW.minusSeconds(5));
+                "Payments.PayRequest.Created.v1", "evt.pay.rtp.v1", "{}", "ix-1", NOW.minusSeconds(5));
     }
 
     /** Counts transactions and says whether one is open right now. */

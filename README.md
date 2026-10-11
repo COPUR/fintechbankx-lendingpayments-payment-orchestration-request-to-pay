@@ -84,12 +84,15 @@ resources set it `false`, and `TlsEnforcementTest` asserts that no other package
 The chart refuses every route to that switch at render time (`deploy/helm`, `deployability.yml`):
 
 - `templates/_fbx_helpers.tpl` is the platform chart's helper file, vendored unchanged (its README, "Vendoring
-  the guard", is the contract): repo `fintechbankx-platform-delivery-iac-cicd-templates`, commit `a4f0072`, path
+  the guard", is the contract): repo `fintechbankx-platform-delivery-iac-cicd-templates`, commit `6b6c317`, path
   `charts/fintechbankx-service/templates/_helpers.tpl`, sha256
-  `1fd684735383301baf3052c5d8978dd86edee1ac1c66ebfb944a8a6a166f4c92`; `deploy/helm` runs `sha256sum -c --strict`
-  on it. `rtp.guard` (`templates/_helpers.tpl`) calls `fbx.guard` once at the top of the Deployment and of the
+  `8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba`; the `deploy/helm` job runs
+  `scripts/ci/verify-vendored-guard.sh` (a byte copy of the platform script at the same commit) with that digest:
+  one header-less guard file, no other `fbx.*` definition, and `fbx.guard` first in the Deployment and the
+  migration Job. `rtp.guard` (`templates/_helpers.tpl`) calls `fbx.guard` once at the top of the Deployment and of the
   migration Job with an adapter dict that maps every route this chart renders: `config`, `extraEnv` / `envFrom` /
-  `extraEnvFrom` (none rendered; refused when set), `databaseCa` (always enabled), `kafka.runtime` from
+  `extraEnvFrom` (none rendered; refused when set), `databaseCa` (always enabled; `mountPath`, `key` and `configMapName` are the values the templates mount, and the
+  guard pins them to `/etc/fintechbankx/rds-ca`, `global-bundle.pem` and `rds-ca-bundle`), `kafka.runtime` from
   `kafka.profile` (`kafka-msk` -> `msk`, `kafka-strimzi` -> `strimzi`, anything else fails) and the fixed
   ExternalSecret keys (`SPRING_DATASOURCE_PASSWORD`; `DB_MIGRATION_USERNAME` / `_PASSWORD` as `extraData`;
   `dataFrom` refused). `fbx.guard` parses `config.DB_URL` as PgJDBC does (exactly one `sslmode=verify-full`,
@@ -102,9 +105,15 @@ The chart refuses every route to that switch at render time (`deploy/helm`, `dep
   `kafka-msk`, `SSL` for `kafka-strimzi`) and endpoint identification to stay `https`, checks
   `JAVA_TOOL_OPTIONS` / `JDK_JAVA_OPTIONS` / `_JAVA_OPTIONS` values, and refuses keys that are not ConfigMap or
   Secret keys. `SPRING_PROFILES_ACTIVE` is rendered through `fbx.kafkaProfile`.
-- `templates/_helpers.tpl` keeps only what `fbx.guard` does not do (`rtp.guardConfigName`): `spring.kafka.properties.*`
-  names are refused (the common client map), JVM option values may not mention `fintechbankx` or `kafka` at all,
-  and `extraEnv` fails the render because this chart renders none.
+- `templates/_helpers.tpl` keeps only what `fbx.guard` does not do (`rtp.guardConfigName`): every
+  `spring.kafka.properties.*` name is refused (the guard refuses its `ssl.*`, `security.protocol` and endpoint
+  identification names and accepts the rest, such as `sasl.*`; this chart takes them all from the profile), and
+  `extraEnv` fails the render because this chart renders none. The JVM option rule (no `fintechbankx` or `kafka`)
+  is `fbx.validateJvmOptions`' since `6b6c317`.
+- `deployability.yml` carries the platform guard's tests (database CA mount, Kafka client TLS, DocumentDB,
+  property-reading and relaxed-binding names, `databaseCa.configMapName` null) as `refuse '<message>'` render
+  probes, each with the guard's real message; cases that need a value this chart lacks (`javaToolOptions`,
+  ExternalSecret `data` / `extraData`, `databaseCa.enabled`) are not copied.
 - Every key and value the templates interpolate into the ConfigMap, the ExternalSecrets and the pod specs is
   quoted (`{{ $key | quote }}: {{ $value | quote }}`, `secretKey`, `property`, `remoteRef.key`, env values,
   Secret and ConfigMap names, labels), numbers go through `int`, and `deploy/helm` proves that a config key or

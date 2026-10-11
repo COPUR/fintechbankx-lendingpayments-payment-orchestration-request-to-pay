@@ -51,7 +51,7 @@ kafka:
 
 # Non-secret runtime settings, rendered into a ConfigMap. The first four are required.
 # Guardrail 4a: every key and value goes through the platform guard vendored in
-# templates/_fbx_helpers.tpl (cicd-templates a4f0072, fbx.guard) plus this chart's
+# templates/_fbx_helpers.tpl (cicd-templates 6b6c317, fbx.guard) plus this chart's
 # rules in templates/_helpers.tpl (rtp.guard). Rendering fails for any key Spring
 # would read as spring.config.*, spring.profiles.*, spring.datasource.* (USERNAME
 # and PASSWORD excepted), spring.flyway.*, spring.liquibase.*, spring.r2dbc.*,

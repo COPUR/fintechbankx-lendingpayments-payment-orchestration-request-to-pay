@@ -82,7 +82,7 @@ refused at render time. Included once at the top of deployment.yaml and of
 migration-job.yaml (a failure in any template stops the whole render).
 
 The rules are the platform chart's, vendored unchanged in _fbx_helpers.tpl
-(cicd-templates a4f0072, charts/fintechbankx-service/templates/_helpers.tpl;
+(cicd-templates 6b6c317, charts/fintechbankx-service/templates/_helpers.tpl;
 sha256 pinned in the README and checked by deployability.yml; its README,
 "Vendoring the guard", is the contract). fbx.guard reads only .Values, so this
 helper passes an adapter dict with every route this chart really renders:
@@ -92,7 +92,9 @@ helper passes an adapter dict with every route this chart really renders:
     passed through so that a set value is refused rather than ignored;
   - javaToolOptions: the chart has no such value (the image's JAVA_TOOL_OPTIONS
     is the Dockerfile's); JVM option names inside config are checked by name;
-  - databaseCa: always enabled here (the bundle is not optional);
+  - databaseCa: always enabled here (the bundle is not optional); mountPath,
+    key and configMapName are the values the templates mount, and the guard
+    pins them to /etc/fintechbankx/rds-ca, global-bundle.pem and rds-ca-bundle;
   - kafka.runtime: mapped from kafka.profile (rtp.kafkaRuntime);
   - externalSecret: enabled, the service Secret's fixed key
     (SPRING_DATASOURCE_PASSWORD) as data, the migration hook Secret's fixed
@@ -114,7 +116,7 @@ Then this chart's own rules, only where fbx.guard has none (rtp.guardConfigName)
       "envFrom" (default list .Values.envFrom)
       "extraEnvFrom" (default list .Values.extraEnvFrom)
       "javaToolOptions" ""
-      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCa.mountPath "key" .Values.databaseCa.key)
+      "databaseCa" (dict "enabled" true "mountPath" .Values.databaseCa.mountPath "key" .Values.databaseCa.key "configMapName" .Values.databaseCa.configMapName)
       "kafka" (dict "runtime" (include "rtp.kafkaRuntime" .))
       "externalSecret" (dict "enabled" .Values.externalSecret.enabled
                              "data" (list (dict "secretKey" "SPRING_DATASOURCE_PASSWORD" "property" "password"
@@ -130,29 +132,22 @@ Then this chart's own rules, only where fbx.guard has none (rtp.guardConfigName)
 {{- end -}}
 
 {{- /*
-Rules fbx.guard (a4f0072) does not have, kept from round 6. The key is
-normalised the way Spring's relaxed binding reads an environment variable
-(upper case, '.' and '-' read as '_'):
+Rule fbx.guard (6b6c317) does not have. The key is normalised the way
+Spring's relaxed binding reads an environment variable (upper case, '.' and
+'-' read as '_'):
   - ^SPRING_?KAFKA_?PROPERTIES_: the common Kafka client map
-    (spring.kafka.properties.*) can set ssl.truststore.*, sasl.* or
-    security.protocol past the kafka-msk / kafka-strimzi profile; fbx.guard
-    checks only the security.protocol and endpoint identification names.
-  - JVM option values (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS; the
-    image entrypoint reads no JAVA_OPTS) may not mention fintechbankx or kafka
-    at all (-Dspring.kafka.properties.sasl.jaas.config=..., -Dfintechbankx.*),
-    on top of fbx.validateJvmOptions (which covers fintechbankx.tls,
-    security.protocol and ssl).
+    (spring.kafka.properties.*). fbx.guard refuses its ssl.*, security.protocol
+    and endpoint identification names but accepts the other client properties
+    (MSK IAM needs sasl.*); this chart takes them all from the kafka-msk or
+    kafka-strimzi profile, so sasl.jaas.config and the rest stay refused too.
+The former JVM option rule (no fintechbankx or kafka in JAVA_TOOL_OPTIONS,
+JDK_JAVA_OPTIONS, _JAVA_OPTIONS) is fbx.validateJvmOptions' since 6b6c317.
 */ -}}
 {{- define "rtp.guardConfigName" -}}
 {{- $key := toString .key -}}
 {{- $n := $key | upper | replace "." "_" | replace "-" "_" -}}
 {{- if regexMatch "^SPRING_?KAFKA_?PROPERTIES_" $n -}}
 {{- fail (printf "config.%s is not allowed: the Kafka client properties (spring.kafka.properties.*) come from the kafka-msk or kafka-strimzi profile, not from values" $key) -}}
-{{- end -}}
-{{- if include "fbx.isJvmOptionsName" $key -}}
-{{- if regexMatch "(?i)fintechbankx|kafka" (toString .value) -}}
-{{- fail (printf "config.%s must not mention fintechbankx or kafka (a -D system property would switch the startup TLS assertion off or change the Kafka client settings)" $key) -}}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 

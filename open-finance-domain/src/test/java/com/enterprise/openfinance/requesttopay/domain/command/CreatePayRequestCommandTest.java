@@ -65,4 +65,22 @@ class CreatePayRequestCommandTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("interactionId");
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"PSU 001", "psu@example.com", "PSU_001", "PSU/1", "PSÜ-1"})
+    void psuIdIsAnOpaqueReferenceOfLettersDigitsAndHyphens(String psuId) {
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new CreatePayRequestCommand("TPP-001", psuId,
+                        "Utilities Co", new java.math.BigDecimal("1.00"), "AED", java.time.Instant.now(), "ix"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("psuId");
+    }
+
+    @Test
+    void psuIdIsAtMostSixtyFourCharacters() {
+        org.assertj.core.api.Assertions.assertThat(new CreatePayRequestCommand("TPP-001", "a".repeat(64),
+                "Utilities Co", new java.math.BigDecimal("1.00"), "AED", java.time.Instant.now(), "ix").psuId())
+                .hasSize(64);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new CreatePayRequestCommand("TPP-001", "a".repeat(65),
+                        "Utilities Co", new java.math.BigDecimal("1.00"), "AED", java.time.Instant.now(), "ix"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("psuId");
+    }
 }

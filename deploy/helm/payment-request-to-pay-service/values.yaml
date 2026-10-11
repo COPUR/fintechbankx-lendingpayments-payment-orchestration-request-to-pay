@@ -1,0 +1,153 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Install into namespace "payments". Override per environment with values-<env>.yaml.
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/payment-request-to-pay-service
+  tag: ""          # immutable tag (git SHA); never "latest". Also the pod label "version".
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  name: payment-request-to-pay-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA, MSK topic access).
+  roleArn: ""
+
+service:
+  port: 8080
+  managementPort: 8081
+
+# Memory request = limit: the JVM sizes its heap from the limit (MaxRAMPercentage=75).
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2
+
+# Owning squad, rendered as the common label fintechbankx.io/squad on every
+# object and pod (platform review round 2: payments).
+squad: payments
+
+kafka:
+  # Exactly kafka-msk (Amazon MSK, IAM auth via IRSA) or kafka-strimzi (in-cluster, TLS client
+  # certificate); rendered as SPRING_PROFILES_ACTIVE. Any other value, a list or an empty value
+  # fails the render: the image's local profile switches the startup TLS assertion off.
+  profile: kafka-msk
+  # KafkaUser secret with user.crt and user.key (kafka-strimzi only).
+  strimziTlsSecret: kafka-client-tls
+  # The broker is trusted through the Strimzi cluster CA: a copy in this
+  # namespace of <cluster>-cluster-ca-cert, key ca.crt (event-streaming 5f7d546).
+  strimziClusterCaSecret: fintechbankx-cluster-ca-cert
+
+# Non-secret runtime settings, rendered into a ConfigMap. The first four are required.
+# Guardrail 4a: every key and value goes through the platform guard vendored in
+# templates/_fbx_helpers.tpl (cicd-templates 6b6c317, fbx.guard) plus this chart's
+# rules in templates/_helpers.tpl (rtp.guard). Rendering fails for any key Spring
+# would read as spring.config.*, spring.profiles.*, spring.datasource.* (USERNAME
+# and PASSWORD excepted), spring.flyway.*, spring.liquibase.*, spring.r2dbc.*,
+# spring.application.json, spring.ssl.*, *ssl_bundle*, fintechbankx.tls.* or
+# spring.kafka.properties.*, in any spelling relaxed binding accepts (indexed
+# forms, canonical forms); for a *JDBC_URL*, *SSL_FACTORY*, *SSL_HOSTNAME_VERIFIER*,
+# *SSL_PASSWORD_CALLBACK*, *SSL_ROOT_CERT* or *SSL_MODE* name (DB_SSL_ROOT_CERT is
+# rendered by the chart); for DB_URL in another spelling; for a key that is not a
+# ConfigMap key ([-._a-zA-Z0-9]+); for a JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS or
+# _JAVA_OPTIONS value that mentions datasource, flyway, liquibase, r2dbc, jdbc,
+# ssl, application.json, spring.config, spring.profiles, fintechbankx, kafka,
+# security.protocol, endpoint.identification, java.security.properties, jdk.tls
+# or hostname verification, contains $( or ${, or reads options from a file; and
+# for a *SECURITY_PROTOCOL value other than the kafka.profile's (SASL_SSL for
+# kafka-msk, SSL for kafka-strimzi) or an *ENDPOINT_IDENTIFICATION_ALGORITHM other
+# than https. There is no extraEnv, envFrom or externalSecret.dataFrom; setting one
+# fails the render. The service asserts TLS at startup (sslmode=verify-full,
+# Kafka SASL_SSL or SSL) and the chart never switches that off.
+config:
+  # jdbc:postgresql://<aurora-writer>:5432/db_pay_request_to_pay_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # (deploy/terraform output jdbc_url). Parsed as PgJDBC reads it: exactly one sslmode=verify-full,
+  # exactly one sslrootcert equal to the mounted bundle, lower-case keys, no sslfactory /
+  # sslfactoryarg / sslhostnameverifier / sslpasswordcallback / service; anything else fails the render.
+  DB_URL: ""
+  KAFKA_BOOTSTRAP_SERVERS: ""     # MSK bootstrap_brokers_sasl_iam (port 9098)
+  OIDC_ISSUER_URI: ""             # https://<identity-host>/realms/fintechbankx
+  OIDC_JWK_SET_URI: ""            # <issuer>/protocol/openid-connect/certs
+  OIDC_AUDIENCE: svc-pay-request-to-pay
+  # Runtime role (DML only, granted by V5); the schema owner is only in the migration Job.
+  DB_USERNAME: payment_request_to_pay_app
+  DB_POOL_MAX: "10"
+  # No KAFKA_SECURITY_PROTOCOL here: the kafka-msk / kafka-strimzi profile in the image sets
+  # spring.kafka.security.protocol (SASL_SSL / SSL) and the service asserts it at startup. A value
+  # set here must match the profile's protocol or the render fails.
+  # Off until evt.pay.rtp.v1 exists on the cluster (runbook step 1); events wait in the outbox.
+  OUTBOX_RELAY_ENABLED: "false"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
+
+# Database credential, synced from AWS Secrets Manager by External Secrets
+# Operator through the platform ClusterSecretStore aws-secrets-manager.
+externalSecret:
+  enabled: true
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name:
+  # <env>/payment-request-to-pay-service/db-app (any other key fails the render).
+  remoteSecretName: ""
+  refreshInterval: 1h
+
+# Flyway as a separate step: a pre-install/pre-upgrade Job runs the image with
+# "migrate" as the schema owner. Its ExternalSecret and Secret exist only while
+# the hook runs; the service pods never see the owner credential.
+migration:
+  enabled: true
+  # REQUIRED Secrets Manager secret
+  # <env>/payment-request-to-pay-service/db-migration ({"username",
+  # "password"} of the schema owner; deploy/terraform output
+  # migration_db_secret_name).
+  remoteSecretName: ""
+  # The Job pod is sidecar-less (sidecar.istio.io/inject "false", like the
+  # payments model; mesh d2ccacc): it talks only to Aurora, outside the mesh,
+  # and carries its own app.kubernetes.io/component db-migration, which no
+  # meshed workload shares. Not configurable.
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 512Mi
+
+# Amazon RDS CA bundle. Same shape as the shared chart's databaseCa
+# (cicd-templates 4f0f266): the platform ConfigMap rds-ca-bundle (key
+# global-bundle.pem, trust-manager) mounted read-only at mountPath in the pods
+# and the migration Job, exported as DB_SSL_ROOT_CERT, not optional (a missing
+# bundle stops the pod), and a DB_URL without sslmode=verify-full against it
+# fails the render.
+databaseCa:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
+# NetworkPolicy belongs to the mesh repo (platform review round 2, cicd-templates
+# 1dd1138), so the chart renders none by default. Opt-in only for a cluster the
+# mesh repo does not cover yet; it admits namespaces only, never a CIDR.
+networkPolicy:
+  enabled: false
+  # 8080: TPP traffic arrives through the Istio ingress gateway only.
+  apiCallerNamespaces:
+    - istio-ingress
+  # Scrape: 15020 (Istio merged metrics) and 8081 from this namespace only.
+  observabilityNamespace: observability
+
+# Metrics: the observability repo's PodMonitor fintechbankx-services is the
+# single scrape path (pod label fintechbankx.io/service-id plus the
+# prometheus.io annotations). This chart ships no ServiceMonitor (cicd-templates
+# 0f86859).
+
+topologySpread:
+  maxSkew: 1

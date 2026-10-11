@@ -23,6 +23,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -52,6 +53,7 @@ class DPoPValidationServiceTest {
                 .jwtID(jti)
                 .issueTime(Date.from(iat))
                 .claim("htm", method.name())
+                .claim("ath", DPoPValidationService.accessTokenHash("token"))
                 .claim("htu", uri.toString())
                 .build();
 
@@ -68,15 +70,15 @@ class DPoPValidationServiceTest {
         Instant iat = Instant.now();
         String dpopProof = createDPoPProof(method, uri, jti, iat);
 
-        when(dpopNonceRepository.saveJtiIfAbsent(jti, 300)).thenReturn(true);
+        when(dpopNonceRepository.saveJtiIfAbsent(eq(jti), anyLong())).thenReturn(true);
 
-        assertDoesNotThrow(() -> dpopValidationService.validateDPoPProof(dpopProof, method, uri));
+        assertDoesNotThrow(() -> dpopValidationService.validateDPoPProof(dpopProof, method, uri, "token"));
     }
 
     @Test
     void validateDPoPProof_withMissingHeader_shouldThrowException() {
         DPoPValidationException ex = assertThrows(DPoPValidationException.class,
-                () -> dpopValidationService.validateDPoPProof(null, HttpMethod.POST, new URI("https://api.example.com")));
+                () -> dpopValidationService.validateDPoPProof(null, HttpMethod.POST, new URI("https://api.example.com"), "token"));
         assertEquals("DPoP header is missing or empty", ex.getMessage());
     }
 
@@ -88,10 +90,10 @@ class DPoPValidationServiceTest {
         Instant iat = Instant.now();
         String dpopProof = createDPoPProof(method, uri, jti, iat);
 
-        when(dpopNonceRepository.saveJtiIfAbsent(jti, 300)).thenReturn(false);
+        when(dpopNonceRepository.saveJtiIfAbsent(eq(jti), anyLong())).thenReturn(false);
 
         DPoPValidationException ex = assertThrows(DPoPValidationException.class,
-                () -> dpopValidationService.validateDPoPProof(dpopProof, method, uri));
+                () -> dpopValidationService.validateDPoPProof(dpopProof, method, uri, "token"));
         assertEquals("DPoP JWT 'jti' replay detected", ex.getMessage());
     }
 
@@ -104,11 +106,10 @@ class DPoPValidationServiceTest {
         Instant iat = Instant.now();
         String dpopProof = createDPoPProof(proofMethod, uri, jti, iat);
 
-        when(dpopNonceRepository.saveJtiIfAbsent(anyString(), anyLong())).thenReturn(true);
-
         DPoPValidationException ex = assertThrows(DPoPValidationException.class,
-                () -> dpopValidationService.validateDPoPProof(dpopProof, requestMethod, uri));
-        assertTrue(ex.getMessage().contains("DPoP JWT 'htm' claim mismatch"));
+                () -> dpopValidationService.validateDPoPProof(dpopProof, requestMethod, uri, "token"));
+        assertTrue(ex.getMessage().contains("DPoP JWT 'htm' claim does not match"));
+        org.mockito.Mockito.verify(dpopNonceRepository, org.mockito.Mockito.never()).saveJtiIfAbsent(anyString(), anyLong());
     }
 
     @Test
@@ -120,10 +121,9 @@ class DPoPValidationServiceTest {
         Instant iat = Instant.now();
         String dpopProof = createDPoPProof(method, proofUri, jti, iat);
 
-        when(dpopNonceRepository.saveJtiIfAbsent(anyString(), anyLong())).thenReturn(true);
-
         DPoPValidationException ex = assertThrows(DPoPValidationException.class,
-                () -> dpopValidationService.validateDPoPProof(dpopProof, method, requestUri));
-        assertTrue(ex.getMessage().contains("DPoP JWT 'htu' claim mismatch"));
+                () -> dpopValidationService.validateDPoPProof(dpopProof, method, requestUri, "token"));
+        assertTrue(ex.getMessage().contains("DPoP JWT 'htu' claim does not match"));
+        org.mockito.Mockito.verify(dpopNonceRepository, org.mockito.Mockito.never()).saveJtiIfAbsent(anyString(), anyLong());
     }
 }

@@ -63,6 +63,37 @@ class PayRequestMapperTest {
         assertThat(domain.paymentId()).isNull();
     }
 
+    @Test
+    void newRequestBecomesANewRowWithoutVersion() {
+        PayRequestJpaEntity entity = mapper.toEntity(sampleRequest(PayRequestStatus.AWAITING_AUTHORISATION, null));
+
+        assertThat(entity.isNew()).isTrue();
+        assertThat(entity.getVersion()).isNull();
+        assertThat(entity.getId()).isEqualTo("CONS-001");
+    }
+
+    @Test
+    void decidedRequestExpectsTheStoredRowAtThePreviousVersion() {
+        PayRequest consumed = new PayRequest("CONS-001", "TPP-001", "PSU-001", "Utilities Co",
+                new BigDecimal("500.00"), "AED", PayRequestStatus.CONSUMED, Instant.parse("2026-02-10T10:00:00Z"),
+                Instant.parse("2026-02-10T10:05:00Z"), "PAY-1", 1L);
+
+        PayRequestJpaEntity entity = mapper.toEntity(consumed);
+
+        assertThat(entity.isNew()).isFalse();
+        assertThat(entity.getVersion()).isZero();
+    }
+
+    @Test
+    void storedVersionBecomesTheDomainVersion() {
+        PayRequestJpaEntity entity = new PayRequestJpaEntity("CONS-001", "TPP-001", "PSU-001", "Utilities Co",
+                new BigDecimal("500.0000"), "AED", "REJECTED", Instant.parse("2026-02-10T10:00:00Z"),
+                Instant.parse("2026-02-10T10:05:00Z"), null, 1L, false);
+
+        assertThat(mapper.toDomain(entity).version()).isEqualTo(1);
+        assertThat(mapper.toDomain(entity).amount()).isEqualByComparingTo("500.00");
+    }
+
     private static PayRequest sampleRequest(PayRequestStatus status, String paymentId) {
         return new PayRequest(
                 "CONS-001",

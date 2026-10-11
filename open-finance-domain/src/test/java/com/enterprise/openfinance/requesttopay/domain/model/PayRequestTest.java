@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.requesttopay.domain.model;
 
+import com.enterprise.openfinance.requesttopay.domain.model.valueobject.DecisionBy;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -33,7 +34,7 @@ class PayRequestTest {
     void shouldTransitionToRejected() {
         PayRequest request = baseRequest();
 
-        PayRequest rejected = request.reject(Instant.parse("2026-02-10T12:00:00Z"));
+        PayRequest rejected = request.reject(new DecisionBy("TPP-001", null), Instant.parse("2026-02-10T12:00:00Z"));
 
         assertThat(rejected.status()).isEqualTo(PayRequestStatus.REJECTED);
         assertThat(rejected.isFinalized()).isTrue();
@@ -43,7 +44,7 @@ class PayRequestTest {
     void shouldTransitionToConsumed() {
         PayRequest request = baseRequest();
 
-        PayRequest consumed = request.consume("PAY-001", Instant.parse("2026-02-10T12:10:00Z"));
+        PayRequest consumed = request.consume("PAY-001", new DecisionBy("TPP-001", null), Instant.parse("2026-02-10T12:10:00Z"));
 
         assertThat(consumed.status()).isEqualTo(PayRequestStatus.CONSUMED);
         assertThat(consumed.paymentIdOptional()).contains("PAY-001");
@@ -51,9 +52,9 @@ class PayRequestTest {
 
     @Test
     void shouldRejectDuplicateFinalize() {
-        PayRequest request = baseRequest().consume("PAY-001", Instant.parse("2026-02-10T12:10:00Z"));
+        PayRequest request = baseRequest().consume("PAY-001", new DecisionBy("TPP-001", null), Instant.parse("2026-02-10T12:10:00Z"));
 
-        assertThatThrownBy(() -> request.reject(Instant.parse("2026-02-10T12:20:00Z")))
+        assertThatThrownBy(() -> request.reject(new DecisionBy("TPP-001", null), Instant.parse("2026-02-10T12:20:00Z")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("finalized");
     }

@@ -43,14 +43,14 @@ class JpaPayRequestRepositoryAdapterTest {
         PayRequestJpaEntity savedEntity = sampleEntity();
 
         when(mapper.toEntity(domain)).thenReturn(entity);
-        when(repository.save(entity)).thenReturn(savedEntity);
+        when(repository.saveAndFlush(entity)).thenReturn(savedEntity);
         when(mapper.toDomain(savedEntity)).thenReturn(domain);
 
         PayRequest saved = adapter.save(domain);
 
         assertThat(saved).isEqualTo(domain);
         verify(mapper).toEntity(domain);
-        verify(repository).save(entity);
+        verify(repository).saveAndFlush(entity);
         verify(mapper).toDomain(savedEntity);
     }
 
@@ -76,6 +76,17 @@ class JpaPayRequestRepositoryAdapterTest {
 
         assertThat(found).isEmpty();
         verify(repository).findById("CONS-001");
+    }
+
+    @Test
+    void findByConsentIdForUpdate_shouldUseTheRowLockingQuery() {
+        PayRequest domain = sampleRequest();
+        PayRequestJpaEntity entity = sampleEntity();
+        when(repository.findByIdForUpdate("CONS-001")).thenReturn(Optional.of(entity));
+        when(mapper.toDomain(entity)).thenReturn(domain);
+
+        assertThat(adapter.findByConsentIdForUpdate("CONS-001")).contains(domain);
+        verify(repository).findByIdForUpdate("CONS-001");
     }
 
     private static PayRequest sampleRequest() {

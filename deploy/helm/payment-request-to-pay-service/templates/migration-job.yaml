@@ -10,6 +10,24 @@ resources are hooks and are deleted once the hooks succeed, so the owner
 credential (the ExternalSecret's target Secret, owned by it) leaves the
 namespace with them. A failed Job stays for inspection until the next attempt.
 */ -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "rtp.migrationName" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "rtp.migrationLabels" . | nindent 4 }}
+    app.kubernetes.io/component: db-migration
+  annotations:
+    # The Job's own account (platform round 7), created as a hook before the
+    # Job: on a first install the chart's ServiceAccount does not exist yet
+    # while pre-install hooks run. No API token is mounted (the Job sets
+    # automountServiceAccountToken false) and no IAM role is attached.
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+automountServiceAccountToken: false
+---
 apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:
@@ -74,6 +92,7 @@ spec:
         sidecar.istio.io/inject: "false"
     spec:
       restartPolicy: Never
+      serviceAccountName: {{ include "rtp.migrationName" . | quote }}
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

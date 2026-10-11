@@ -2,7 +2,8 @@
 """Check every rendered ExternalSecret against the platform secret naming contract.
 
 Reads `helm template` output on stdin. For each ExternalSecret:
-  - metadata.labels["app.kubernetes.io/name"] equals the chart's ServiceAccount name;
+  - metadata.labels["app.kubernetes.io/name"] equals the chart's ServiceAccount name (the one
+    account that is not a Helm hook; hook accounts may carry no IAM role);
   - every spec.data[].remoteRef.key and spec.dataFrom[].extract.key starts with
     "<env>/<service account>/" (the ClusterSecretStore reads only <env>/* and IRSA
     scopes each workload to its own prefix).
@@ -29,9 +30,17 @@ def main():
     args = parser.parse_args()
 
     docs = [d for d in yaml.safe_load_all(sys.stdin) if isinstance(d, dict)]
-    accounts = [d["metadata"]["name"] for d in docs if d.get("kind") == "ServiceAccount"]
+    # The chart's ServiceAccount is the one account that is not a Helm hook; a hook account (the
+    # migration Job's own) carries no IAM role, so it reads nothing through IRSA.
+    def is_hook(d):
+        return "helm.sh/hook" in (d["metadata"].get("annotations") or {})
+    service_accounts = [d for d in docs if d.get("kind") == "ServiceAccount"]
+    accounts = [d["metadata"]["name"] for d in service_accounts if not is_hook(d)]
     secrets = [d for d in docs if d.get("kind") == "ExternalSecret"]
     errors = []
+    for hook in (d for d in service_accounts if is_hook(d)):
+        if "eks.amazonaws.com/role-arn" in (hook["metadata"].get("annotations") or {}):
+            errors.append(f"hook ServiceAccount {hook['metadata']['name']} carries an IAM role")
     if len(accounts) != 1:
         errors.append(f"expected exactly one ServiceAccount, rendered {len(accounts)}")
     if not secrets:

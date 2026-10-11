@@ -2,3 +2,10 @@
 api/openapi/*.accepted-breaking.txt @COPUR
 # Waivers of the AsyncAPI (and any other) breaking-change gate need the API owner's review.
 **/*.accepted-breaking.txt @COPUR
+
+# Guardrail 4a: the vendored platform guard (cicd-templates 6b6c317), its verifier, the workflow
+# that pins the guard's sha256, and this file. Takes effect once code-owner review is required.
+/deploy/helm/payment-request-to-pay-service/templates/_fbx_helpers.tpl @COPUR
+/scripts/ci/verify-vendored-guard.sh @COPUR
+/.github/workflows/deployability.yml @COPUR
+/.github/CODEOWNERS @COPUR

@@ -113,6 +113,8 @@ migration:
   # payments model; mesh d2ccacc): it talks only to Aurora, outside the mesh,
   # and carries its own app.kubernetes.io/component db-migration, which no
   # meshed workload shares. Not configurable.
+  # Before a sidecar is ever injected here, the mesh must admit the Job's own
+  # hook ServiceAccount (templates/migration-job.yaml) for Aurora egress.
   backoffLimit: 1
   activeDeadlineSeconds: 600
   resources:

@@ -17,7 +17,6 @@ metadata:
   namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "rtp.migrationLabels" . | nindent 4 }}
-    app.kubernetes.io/component: db-migration
   annotations:
     # The Job's own account (platform round 7), created as a hook before the
     # Job: on a first install the chart's ServiceAccount does not exist yet

@@ -315,7 +315,13 @@ if grep -q 'db-migration' <<<"$deployment"; then echo "the service pods referenc
 # Job convention (cicd-templates 335a345): the Job pod carries name=<SA> and component
 # db-migration, API pods component service; no Service, PDB, Deployment, topology spread or
 # NetworkPolicy selector may select the Job pod, and only API pods carry the service-id label.
-python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+# PyYAML for the checks below, in a throwaway venv: the runner's Python may be externally managed,
+# where pip --user fails.
+if ! python3 -c "import yaml" 2>/dev/null; then
+  pyyaml_venv="$(mktemp -d)/pyyaml"
+  python3 -m venv "$pyyaml_venv" && "$pyyaml_venv/bin/pip" install --quiet pyyaml==6.0.2 || exit 1
+  PATH="$pyyaml_venv/bin:$PATH"
+fi
 helm template ci "$chart" "${args[@]}" --set networkPolicy.enabled=true | python3 scripts/ci/helm-selector-check.py "$sa" svc-pay-request-to-pay
 if helm template ci "$chart" "${args[@]}" --set networkPolicy.enabled=true \
      | sed 's/app.kubernetes.io\/component: db-migration/app.kubernetes.io\/component: service/' \
@@ -372,7 +378,6 @@ strimzi="$(helm template ci "$chart" "${args[@]}" --set kafka.profile=kafka-stri
 grep -A4 'name: KAFKA_TLS_CA' <<<"$strimzi" | grep -q 'name: "fintechbankx-cluster-ca-cert"'
 # Platform round 7: the migration Job runs as its own hook ServiceAccount (no token, no IAM
 # role), created before the Job, never the chart's account or the namespace default.
-python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
 helm template ci "$chart" "${args[@]}" | python3 -c '
 import sys, yaml
 docs = [d for d in yaml.safe_load_all(sys.stdin) if d]

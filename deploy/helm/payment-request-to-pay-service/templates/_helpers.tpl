@@ -82,7 +82,7 @@ refused at render time. Included once at the top of deployment.yaml and of
 migration-job.yaml (a failure in any template stops the whole render).
 
 The rules are the platform chart's, vendored unchanged in _fbx_helpers.tpl
-(cicd-templates 6b6c317, charts/fintechbankx-service/templates/_helpers.tpl;
+(cicd-templates 73e1881, charts/fintechbankx-service/templates/_helpers.tpl;
 sha256 pinned in the README and checked by deployability.yml; its README,
 "Vendoring the guard", is the contract). fbx.guard reads only .Values, so this
 helper passes an adapter dict with every route this chart really renders:
@@ -132,7 +132,7 @@ Then this chart's own rules, only where fbx.guard has none (rtp.guardConfigName)
 {{- end -}}
 
 {{- /*
-Rule fbx.guard (6b6c317) does not have. The key is normalised the way
+Rule fbx.guard (73e1881) does not have. The key is normalised the way
 Spring's relaxed binding reads an environment variable (upper case, '.' and
 '-' read as '_'):
   - ^SPRING_?KAFKA_?PROPERTIES_: the common Kafka client map

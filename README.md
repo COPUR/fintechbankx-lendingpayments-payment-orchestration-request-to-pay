@@ -84,9 +84,9 @@ resources set it `false`, and `TlsEnforcementTest` asserts that no other package
 The chart refuses every route to that switch at render time (`deploy/helm`, `deployability.yml`):
 
 - `templates/_fbx_helpers.tpl` is the platform chart's helper file, vendored unchanged (its README, "Vendoring
-  the guard", is the contract): repo `fintechbankx-platform-delivery-iac-cicd-templates`, commit `6b6c317`, path
+  the guard", is the contract): repo `fintechbankx-platform-delivery-iac-cicd-templates`, commit `73e1881`, path
   `charts/fintechbankx-service/templates/_helpers.tpl`, sha256
-  `8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba`; the `deploy/helm` job runs
+  `4f2cdfe056f5afce0297f699c8b66cb80dc42e8e311759bf4a973f8a15b28b2d`; the `deploy/helm` job runs
   `scripts/ci/verify-vendored-guard.sh` (a byte copy of the platform script at the same commit) with that digest:
   one header-less guard file, no other `fbx.*` definition, and `fbx.guard` first in the Deployment and the
   migration Job. `rtp.guard` (`templates/_helpers.tpl`) calls `fbx.guard` once at the top of the Deployment and of the

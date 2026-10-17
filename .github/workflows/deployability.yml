@@ -37,9 +37,9 @@ jobs:
       - name: Vendored platform guard
         run: |
           # Source: COPUR/fintechbankx-platform-delivery-iac-cicd-templates,
-          # charts/fintechbankx-service/templates/_helpers.tpl at commit 6b6c317 (header-less copy in
+          # charts/fintechbankx-service/templates/_helpers.tpl at commit 73e1881 (header-less copy in
           # templates/_fbx_helpers.tpl); scripts/ci/verify-vendored-guard.sh is the same commit's script.
-          scripts/ci/verify-vendored-guard.sh deploy/helm/payment-request-to-pay-service 8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba
+          scripts/ci/verify-vendored-guard.sh deploy/helm/payment-request-to-pay-service 4f2cdfe056f5afce0297f699c8b66cb80dc42e8e311759bf4a973f8a15b28b2d
       - name: Lint and render chart
         shell: bash
         run: |
@@ -192,7 +192,7 @@ jobs:
             echo "the config guard rejected an ordinary config key, a plain JVM option or the MSK protocol" >&2; exit 1
           fi
 
-          # Platform guard tests of cicd-templates 6b6c317 (database CA, Kafka client TLS, DocumentDB, property
+          # Platform guard tests of cicd-templates 73e1881 (database CA, Kafka client TLS, DocumentDB, property
           # reading and relaxed binding names), as render probes: this chart has no helm-unittest. Each probe
           # states the guard's real message, so it cannot pass because the render failed for another reason.
           # Cases that need a value this chart does not have are not copied: javaToolOptions (none), the
@@ -314,6 +314,31 @@ jobs:
           # From scripts/ci/validate-chart.sh must_fail (6b6c317), in this chart's value names.
           refuse 'extraEnv must not set SPRING_KAFKA_PRODUCER_PROPERTIES_SSL_TRUSTSTORE_CERTIFICATES' --set 'extraEnv[0].name=SPRING_KAFKA_PRODUCER_PROPERTIES_SSL_TRUSTSTORE_CERTIFICATES' --set-string 'extraEnv[0].valueFrom.configMapKeyRef.name=other' --set-string 'extraEnv[0].valueFrom.configMapKeyRef.key=ca'
           refuse 'config.KAFKA_TLS_CERT is not allowed' --set kafka.profile=kafka-strimzi --set-string 'config.KAFKA_TLS_CERT=-----BEGIN CERTIFICATE-----'
+          # Schema-management names, JVM options and bracket names (cicd-templates 73e1881): each refused for its own reason.
+          refuse 'config\.SPRING_JPA_HIBERNATE_DDL_AUTO is not allowed: a schema-management setting' --set-string config.SPRING_JPA_HIBERNATE_DDL_AUTO=create-drop
+          refuse 'config\.spring\.jpa\.generate-ddl is not allowed: a schema-management setting' --set-string 'config.spring\.jpa\.generate-ddl=true'
+          refuse 'config\.SPRING_JPA_PROPERTIES_HIBERNATE_HBM2DDL_AUTO is not allowed: a schema-management setting' --set-string config.SPRING_JPA_PROPERTIES_HIBERNATE_HBM2DDL_AUTO=update
+          refuse 'extraEnv must not set SPRING_SQL_INIT_MODE \(value or valueFrom\): a schema-management setting' --set-json 'extraEnv=[{"name":"SPRING_SQL_INIT_MODE","value":"always"}]'
+          refuse 'extraEnv must not set spring\.sql\.init\.schema-locations \(value or valueFrom\): a schema-management setting' --set-json 'extraEnv=[{"name":"spring.sql.init.schema-locations","valueFrom":{"configMapKeyRef":{"name":"other","key":"schema"}}}]'
+          refuse 'config\.SPRING_SQLINIT_MODE is not allowed: a schema-management setting' --set-string config.SPRING_SQLINIT_MODE=always
+          refuse 'externalSecret\.data must not materialise hibernate\.hbm2ddl\.auto' --set-json 'externalSecret.data=[{"secretKey":"hibernate.hbm2ddl.auto","property":"ddl"}]'
+          refuse 'externalSecret\.extraData must not materialise jakarta\.persistence\.schema-generation\.database\.action' --set-json 'externalSecret.extraData=[{"secretKey":"jakarta.persistence.schema-generation.database.action","property":"action"}]'
+          refuse 'config\.JAVAX_PERSISTENCE_SCHEMA_GENERATION_DATABASE_ACTION is not allowed: a schema-management setting' --set-string config.JAVAX_PERSISTENCE_SCHEMA_GENERATION_DATABASE_ACTION=drop-and-create
+          refuse 'config\.spring\.j_pa\.hibernate\.ddl-auto is not allowed: a schema-management setting' --set-string 'config.spring\.j_pa\.hibernate\.ddl-auto=create'
+          refuse 'extraEnv must not set spring\[jpa\]\.generate-ddl .*: a schema-management setting' --set-json 'extraEnv=[{"name":"spring[jpa].generate-ddl","value":"true"}]'
+          refuse 'extraEnv must not set _SPRING_JPA_DEFER_DATASOURCE_INITIALIZATION .*: a schema-management setting' --set-json 'extraEnv=[{"name":"_SPRING_JPA_DEFER_DATASOURCE_INITIALIZATION","value":"true"}]'
+          refuse 'externalSecret\.data must not materialise Hibernate\.Hbm2ddl\.Auto' --set-json 'externalSecret.data=[{"secretKey":"Hibernate.Hbm2ddl.Auto","property":"ddl"}]'
+          refuse 'config\.JAVA_TOOL_OPTIONS must not mention .*spring\.jpa, spring\.sql\.init, hibernate' --set-string 'config.JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75 -Dspring.jpa.hibernate.ddl-auto=create-drop'
+          refuse 'config\.JDK_JAVA_OPTIONS must not mention .*hibernate' --set-string config.JDK_JAVA_OPTIONS=-Dhibernate.hbm2ddl.auto=update
+          refuse 'extraEnv\.JAVA_TOOL_OPTIONS must not mention .*jakarta\.persistence' --set-json 'extraEnv=[{"name":"JAVA_TOOL_OPTIONS","value":"-Djakarta.persistence.schema-generation.database.action=drop-and-create"}]'
+          refuse 'extraEnv\._JAVA_OPTIONS must not mention .*javax\.persistence' --set-json 'extraEnv=[{"name":"_JAVA_OPTIONS","value":"-Djavax.persistence.schema-generation.database.action=create"}]'
+          refuse 'config\.JAVA_TOOL_OPTIONS must not mention .*spring\.sql\.init' --set-string config.JAVA_TOOL_OPTIONS=-Dspring.sql.init.mode=always
+          refuse 'config\.JAVA_TOOL_OPTIONS must not mention .*spring\.jpa' --set-string 'config.JAVA_TOOL_OPTIONS=-Dspring.j_pa.generate-ddl=true'
+          refuse 'extraEnv must not set spring\.J\]PA\.generate-ddl \(value or valueFrom\): a schema-management setting' --set-json 'extraEnv=[{"name":"spring.J]PA.generate-ddl","value":"true"}]'
+          refuse 'extraEnv must not set -s\]pring\.sql\.init\.mode \(value or valueFrom\): a schema-management setting' --set-json 'extraEnv=[{"name":"-s]pring.sql.init.mode","value":"always"}]'
+          refuse 'extraEnv must not set -SPRIN\]G_JPA_HIBERNATE_DDLAUTO \(value or valueFrom\): a schema-management setting' --set-json 'extraEnv=[{"name":"-SPRIN]G_JPA_HIBERNATE_DDLAUTO","value":"create-drop"}]'
+          refuse 'extraEnv must not set S\]PRING\.profiles\.active \(value or valueFrom\): a profile can activate' --set-json 'extraEnv=[{"name":"S]PRING.profiles.active","value":"local"}]'
+          refuse 'extraEnv\.spring\.kafka\.security\.proto\]col must be SASL_SSL or SSL' --set-json 'extraEnv=[{"name":"spring.kafka.security.proto]col","value":"PLAINTEXT"}]'
           # Control: plain database URL options stay accepted. (The platform controls that accept
           # spring.kafka.properties.* names such as sasl.*, which rtp.guardConfigName refuses in this chart.)
           accept --set-string 'config.DB_URL=jdbc:postgresql://db.example.internal:5432/db_ln_loan_lifecycle_dev?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem&ApplicationName=loan&connectTimeout=10'

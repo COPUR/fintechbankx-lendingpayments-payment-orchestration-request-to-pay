@@ -1,0 +1,178 @@
+# svc-pay-request-to-pay runtime configuration.
+# Every environment-specific value comes from the environment (Helm values,
+# Kubernetes Secret synced from AWS Secrets Manager); nothing secret is here.
+spring:
+  application:
+    # Naming standard: app.<context-code>.<capability>.
+    name: app.pay.request-to-pay
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 40s
+  datasource:
+    # Deployed: sslmode=verify-full against the RDS CA bundle the chart mounts
+    # (deploy/terraform output jdbc_url).
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/db_pay_request_to_pay_local}
+    username: ${DB_USERNAME:payment_request_to_pay_app}
+    # The credential is bound from SPRING_DATASOURCE_PASSWORD (Kubernetes Secret
+    # synced from AWS Secrets Manager); it is never written in this file.
+    hikari:
+      schema: sc_pay_request_to_pay
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: 3000
+      max-lifetime: 1200000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: sc_pay_request_to_pay
+        jdbc:
+          time_zone: UTC
+  flyway:
+    # Migrations run as the schema owner (DB_MIGRATION_USERNAME / _PASSWORD,
+    # secret <env>/payment-request-to-pay-service/db-migration), deployed as the
+    # Helm pre-install/pre-upgrade Job "migrate"; the pods get only the runtime
+    # role (DB_USERNAME, secret db-app) and run with SPRING_FLYWAY_ENABLED=false.
+    # V5 grants the runtime role its DML, V6 USAGE, SELECT on sequences. The
+    # schema comes from the DBA bootstrap (terraform-modules aurora-postgresql
+    # role_bootstrap_sql: owned by the migration role), so Flyway never creates
+    # it. Without DB_MIGRATION_* (local runs) Flyway uses the app credentials.
+    user: ${DB_MIGRATION_USERNAME:${spring.datasource.username}}
+    password: ${DB_MIGRATION_PASSWORD:${spring.datasource.password:}}
+    placeholders:
+      runtime_role: ${spring.datasource.username}
+    schemas: sc_pay_request_to_pay
+    default-schema: sc_pay_request_to_pay
+    create-schemas: false
+    locations: classpath:db/migration
+  kafka:
+    # Runtime-neutral; authentication comes from profile kafka-msk or kafka-strimzi.
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    admin:
+      # Topics exist only through the platform topic catalog; never create them from here.
+      auto-create: false
+    producer:
+      client-id: svc-pay-request-to-pay
+      acks: all
+      compression-type: lz4
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms; the relay
+        # send-timeout stays above delivery.timeout.ms, and run-budget + max.block.ms +
+        # send-timeout stays inside the 40 s shutdown phase (KafkaProducerConfigurationTest).
+        delivery.timeout.ms: 12000
+        request.timeout.ms: 10000
+        linger.ms: 5
+        # Bounds the time KafkaTemplate.send blocks for metadata (default 60 s).
+        max.block.ms: 5000
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
+          jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
+          # Access tokens must name this service in aud (Keycloak audience mapper).
+          expected-audience: ${OIDC_AUDIENCE:svc-pay-request-to-pay}
+
+server:
+  port: 8080
+  shutdown: graceful
+  # The ingress gateway overwrites X-Forwarded-Proto/Host/Port; the DPoP htu is built from them.
+  # X-Forwarded-For is never used for authorization.
+  forward-headers-strategy: framework
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  metrics:
+    # Platform common tags: service id, service account (app) and namespace
+    # (squad; the platform outbox alerts route on it). The chart sets the last
+    # two from serviceAccount.name and the release namespace.
+    tags:
+      service: svc-pay-request-to-pay
+      app: ${METRICS_TAG_APP:payment-request-to-pay-service}
+      squad: ${METRICS_TAG_SQUAD:payments}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  observations:
+    key-values:
+      service: svc-pay-request-to-pay
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://otel-collector.observability.svc.cluster.local:4318/v1/traces}
+
+fintechbankx:
+  tls:
+    # Startup TLS assertion (TlsEnforcement): the service stops unless spring.datasource.url has
+    # sslmode=verify-full and the Kafka security.protocol is SASL_SSL (SSL for kafka-strimzi).
+    # Only the local profile and the test resources set it false; the chart never does.
+    enforce: true
+
+openfinance:
+  requesttopay:
+    cache:
+      # Per-replica status cache; other replicas converge within this TTL.
+      ttl: ${PAY_REQUEST_CACHE_TTL:PT10S}
+    idempotency:
+      ttl: PT24H
+
+requesttopay:
+  security:
+    tpp:
+      # TPP paths need this scope as well as aud: an optional client scope of TPP clients in the
+      # realm (identity realm-as-code, Proposed), so TPP flows must request it.
+      required-scope: ${TPP_REQUIRED_SCOPE:payments}
+      # Keycloak adds this service's audience to service and channel clients too; they are
+      # not TPPs. Service clients are named svc-<ctx>-<capability>.
+      denied-client-prefixes: svc-
+      denied-client-ids: fintechbankx-web,fintechbankx-mobile
+      # Fail closed: the token must carry this claim with this value. The realm's default client
+      # scope fbx-client-type-open-finance-tpp emits it on every open-finance TPP client.
+      client-type-claim: fbx_client_type
+      client-type: open-finance-tpp
+  outbox:
+    retention: P7D
+    relay:
+      # Off until the aggregate topic evt.pay.rtp.v1 exists on the platform cluster and the payments
+      # owner has decided who may accept a pay request (runbook preconditions).
+      enabled: ${OUTBOX_RELAY_ENABLED:false}
+      interval: PT1S
+      batch-size: 100
+      # Longer than delivery.timeout.ms (12 s) so the relay observes the producer's real outcome.
+      send-timeout: PT13S
+      # No new send starts after this much time in one run (shutdown budget, see above).
+      # Payload errors park the row; every other error stops the batch unmarked and the relay
+      # backs off (ADR-021 decision 4). Nothing else is parked automatically.
+      run-budget: PT10S
+  housekeeping:
+    interval: PT10M
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-}]"

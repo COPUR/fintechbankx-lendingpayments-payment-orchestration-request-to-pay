@@ -2,11 +2,26 @@ package com.enterprise.openfinance.requesttopay.domain.model;
 
 import java.time.Duration;
 
-public record PayRequestSettings(Duration cacheTtl) {
+/**
+ * @param cacheTtl        how long a status read may be served from the cache
+ * @param idempotencyTtl  how long an x-idempotency-key is remembered
+ */
+public record PayRequestSettings(Duration cacheTtl, Duration idempotencyTtl) {
+
+    public static final Duration DEFAULT_IDEMPOTENCY_TTL = Duration.ofHours(24);
 
     public PayRequestSettings {
-        if (cacheTtl == null || cacheTtl.isZero() || cacheTtl.isNegative()) {
-            throw new IllegalArgumentException("cacheTtl must be positive");
+        requirePositive(cacheTtl, "cacheTtl");
+        requirePositive(idempotencyTtl, "idempotencyTtl");
+    }
+
+    public PayRequestSettings(Duration cacheTtl) {
+        this(cacheTtl, DEFAULT_IDEMPOTENCY_TTL);
+    }
+
+    private static void requirePositive(Duration value, String field) {
+        if (value == null || value.isZero() || value.isNegative()) {
+            throw new IllegalArgumentException(field + " must be positive");
         }
     }
 }

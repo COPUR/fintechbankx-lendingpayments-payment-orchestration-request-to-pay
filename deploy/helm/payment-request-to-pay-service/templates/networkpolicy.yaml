@@ -1,0 +1,38 @@
+{{- if .Values.networkPolicy.enabled }}
+# Opt-in only: NetworkPolicy belongs to the mesh repo (cicd-templates 1dd1138).
+# Namespaces only, never a CIDR. The mesh (default-deny AuthorizationPolicy,
+# STRICT mTLS) authorises callers by principal on top of this.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "rtp.name" . | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "rtp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "rtp.selectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.apiCallerNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.service.port | int }}
+          protocol: TCP
+    # Scrape: the observability PodMonitor reads Istio's merged metrics on
+    # 15020 (app 8081 and Envoy); 15020 and 8081 from that namespace only.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace | quote }}
+      ports:
+        - port: 15020
+          protocol: TCP
+        - port: {{ .Values.service.managementPort | int }}
+          protocol: TCP
+{{- end }}

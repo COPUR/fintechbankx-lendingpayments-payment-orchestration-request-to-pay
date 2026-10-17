@@ -1,0 +1,270 @@
+# RUNBOOK-EXTRACT-pay-request-to-pay
+
+Status: **Proposed**. Extraction of the request-to-pay capability
+(`open-finance-context`, package `requesttopay`) from
+`enterprise-loan-management-system` into `svc-pay-request-to-pay` (this
+repository), following the strangler-fig steps of `fbx-monolith-extraction` and
+the template `docs/runbooks/RUNBOOK-EXTRACT-service-cutover.md` (adr-runbooks).
+Nothing below has been executed.
+
+## Document Control
+
+- Runbook ID: `RUNBOOK-EXTRACT-pay-request-to-pay`
+- Version: `v1.1` (Proposed)
+- Owner squad: payments squad (owner of `fintechbankx-lendingpayments-payment-orchestration-request-to-pay`)
+- Change window: to be set by the owner squad (not before the cross-repository order in section 2 is complete)
+- Risk tier: **High** (proposed): payments context, TPP-facing API; an `Accepted` event may later drive payment
+  initiation (ADR-030 open question 1). High risk needs Architecture Board approval (template precondition 8)
+- Cut-over switch: ingress gateway routes in section 3 (the monolith has no internal caller of `requesttopay`, so
+  there is no in-monolith adapter or flag); TPP cohort allow-list `rtp-cutover-cohort` at the gateway
+- Rollback tags: monolith `rtp-extract-pre-cutover` on `master` (to create before step 5), target
+  `svc-pay-request-to-pay-<version>` of the deployed release
+- Matrix row: **LP-10**; regression mapping `docs/migration/REGRESSION_MAPPING.md`
+
+| Field | Value |
+|---|---|
+| Context / service | `pay` / `svc-pay-request-to-pay` (Helm, Docker and service account name `payment-request-to-pay-service`, namespace `payments`) |
+| Slice | PayRequest aggregate: create, read status, accept (consume with a payment id), reject |
+| Owned data | `db_pay_request_to_pay_<env>`, schema `sc_pay_request_to_pay`: `pay_request`, `pay_request_idempotency`, `dpop_proof_jti`, `outbox_event` |
+| Events | `evt.pay.rtp.v1`, one topic for the PayRequest aggregate (ADR-019, owner decision 2026-10-08), types `Payments.PayRequest.{Created,Accepted,Rejected}.v1` named by the `eventType` header, key = aggregateId ([AsyncAPI](../../api/asyncapi/svc-pay-request-to-pay.yaml)). No DLQ here: dead-letter topics belong to consumers (ADR-019, ADR-024) |
+| Public paths (exact) | `POST /open-finance/v1/par`; `GET /open-finance/v1/payment-consents/{id}`; `POST /open-finance/v1/payment-consents/{id}/accept`; `POST /open-finance/v1/payment-consents/{id}/reject`. Nothing else, no prefix routes |
+| Ids | this service mints `CONS-RTP2-<uuid>`; the monolith mints `CONS-RTP-<uuid>`. Follow-up calls are routed by this prefix in every phase |
+| Depends on | Keycloak realm `fintechbankx` only (no synchronous calls to other services) |
+
+## 1. Data ownership split
+
+| Monolith object | Finding | Consequence |
+|---|---|---|
+| `open-finance-context/.../requesttopay/infrastructure/persistence/InMemoryPayRequestRepositoryAdapter` | the only repository adapter for pay requests in the monolith | pay requests never reached a database |
+| Monolith Flyway migrations (`src/main/resources/db/migration`, `open-finance-context/.../db/migration/openfinance/V1__create_outbox.sql`, `V2__create_payment_eventing_support.sql`) | no table for pay requests | nothing to export |
+| Monolith idempotency / cache for request-to-pay | in-memory | nothing to export |
+
+**No backfill is needed** (template steps 4 to 6 do not apply). Cut-over is routing only, and this repository has
+no `db/backfill` or data-split CI job. Pay requests that are open in the monolith when traffic moves stay there;
+they live only in that process's memory and expire with it, as they do today on every restart.
+
+Flyway migrations: `open-finance-infrastructure/src/main/resources/db/migration/V1__create_pay_request_tables.sql`,
+`V2__create_outbox.sql`, `V3__outbox_failure_policy.sql`, `V4__outbox_park_counted.sql`,
+`V5__grant_runtime_role_least_privilege.sql` (runtime role DML only) and `V6__grant_runtime_role_sequences.sql`
+(runtime role USAGE, SELECT on sequences), all run as the migration role by the migration Job.
+
+V4 was edited in place before any release (a comment on the best-effort parked counter), so its Flyway checksum
+changed. A database that already ran the earlier V4 (a developer or CI database; no release exists) fails
+validation with "Migration checksum mismatch for migration version 4". Fix it either way, as the migration role:
+recreate the schema (drop `sc_pay_request_to_pay`, recreate it owned by the migration role, run the migration Job)
+or run `flyway repair` against it, which only rewrites the stored checksum. Never edit an applied migration after
+the first release; add a new version instead. V1 replaces the seed
+migration `V1__Create_pay_requests_table.sql` (schema `pis`), which no environment ever applied because the seed had
+no runnable application. The service never reads monolith tables and no other service reads `sc_pay_request_to_pay`.
+
+## 2. Preconditions
+
+| Precondition | Owner |
+|---|---|
+| ADR-030 (`docs/architecture/decisions/ADR-local-rtp-openapi-realignment.md`) accepted and this PR merged | payments owner, API governance |
+| Payments owner has answered ADR-030 open question 1 (who may accept or reject). Until then `OUTBOX_RELAY_ENABLED` stays `false` in every environment, so no consumer acts on `Accepted` | payments owner |
+| Keycloak: confidential client `svc-pay-request-to-pay`; Audience mapper adding `svc-pay-request-to-pay` to every TPP client allowed to call it; client scope `payments` on those TPP clients (ADR-030 open question 2); default client scope `fbx-client-type-open-finance-tpp` on every TPP client, emitting `fbx_client_type` = `open-finance-tpp` (required: the service refuses a token without it); TPP clients DPoP-enabled | identity (fintechbankx-platform-identity-keycloak-ldap) |
+| Mesh contract for `payment-request-to-pay-service` declares `datastores: [aurora-postgresql, msk]` (egress to the Aurora writer and reader on 5432 and the MSK IAM brokers on 9098, plus regional STS for IRSA); without it the readiness group (`db`) fails under `REGISTRY_ONLY` | fintechbankx-platform-mesh-security-service-mesh |
+| Mesh: gateway routes for the four exact paths in section 3, with the platform forwarded-header rules (the DPoP `htu` check uses `X-Forwarded-Proto/Host/Port`) and the cohort allow-list; inbound ALLOW for `cluster.local/ns/istio-ingress/sa/istio-ingressgateway` to `payment-request-to-pay-service` on 8080 only (8081 is never public) | fintechbankx-platform-mesh-security-service-mesh |
+| Topic `evt.pay.rtp.v1` in the topic catalog and on MSK (RF 3, `min.insync.replicas=2`; event-streaming-kafka PR #12, c4b69b0, adds it to the topic provisioning); topic-scoped MSK IAM policy for this service's IRSA role (write on `evt.pay.rtp.v1` only) | fintechbankx-platform-event-streaming-kafka |
+| openapi-catalog mirrors `api/openapi/request-to-pay-service.yaml` 1.0.0; asyncapi-catalog mirrors `api/asyncapi/svc-pay-request-to-pay.yaml` with the publishes status from this branch (and drops its dual-publish note) | API governance |
+| Enterprise-architecture: LP-10 note updated (service runnable, events through the outbox, legacy `rtp.pay_requests.v1` publisher removed) | enterprise architecture |
+| Regression parity: LP-10 run with 0 regressions, every difference one of LP-10-D01 to D13, run id `<run>-<sha7>` recorded (`docs/migration/REGRESSION_MAPPING.md`) | regression workstream, payments squad |
+| Observability gate (section 4) passed | payments squad, platform observability |
+| DBA bootstrap, two roles (platform contract "Database roles"): run the SQL of terraform-modules `aurora-postgresql` `role_bootstrap_sql` (1e6ca85) with migration role `payment_request_to_pay_migration` and runtime role `payment_request_to_pay_app`: it creates both LOGIN roles, creates schema `sc_pay_request_to_pay` **owned by the migration role** (Flyway never creates it: `create-schemas: false`), grants the runtime role USAGE on the schema and default privileges (SELECT, INSERT, UPDATE, DELETE on tables; USAGE, SELECT on sequences). Credentials: `{"username","password"}` of the migration role in `<env>/payment-request-to-pay-service/db-migration` (Terraform output `migration_db_secret_name`), of the runtime role in `<env>/payment-request-to-pay-service/db-app`. V5 then narrows the runtime role to the DML the service issues on the four existing tables, V6 grants USAGE, SELECT on the existing sequences; a later migration that adds a table must REVOKE what the default privileges grant beyond its needs. The Helm pre-install/pre-upgrade Job runs V1 to V6 as the migration role and the pods run with `SPRING_FLYWAY_ENABLED=false` | payments squad DBA |
+| ConfigMap `rds-ca-bundle` (key `global-bundle.pem`) published in namespace `payments` by the mesh repo's trust-manager Bundle. The chart mounts it at `/etc/fintechbankx/rds-ca` (not optional: without it no pod and no migration Job starts) and `DB_URL` must be the Terraform output `jdbc_url` (`sslmode=verify-full`) | fintechbankx-platform-mesh-security-service-mesh |
+| Install order: cert-manager, trust-manager and the `rds-ca-bundle` Bundle (mesh 5e756f0, `k8s/platform/cert-manager/bundle-rds-ca.yaml`) are installed before any service chart. A pod scheduled earlier stays `ContainerCreating` (the `database-ca` volume is not optional) until the ConfigMap appears; that includes the pre-install migration Job, so `helm install` waits and then fails on its hook timeout. Note: `scripts/istio/install-mesh.sh` at mesh 4bf3906 installs Istio and the kustomize policies only; the cert-manager and trust-manager step is the mesh team's to confirm | fintechbankx-platform-mesh-security-service-mesh |
+| Selector labels in place before the first install: the Deployment selects `app.kubernetes.io/component=service` (cicd-templates 335a345). `spec.selector` is immutable, so changing it after an install means deleting and recreating the Deployment (an outage), not a `helm upgrade`. No release exists yet | payments squad |
+
+### Mesh policy (mesh branch `claude/platform-deployable-tkl0z7` at 4bf3906)
+
+What the mesh repo already provides for this service, and what is still a request:
+
+**A. Inbound: the gateway is the only principal into 8080.** `deploy/kustomize/base/generated/authorization-policies.yaml`
+policy `allow-from-istio-ingress-istio-ingressgateway-to-payment-request-to-pay-service` (namespace `payments`,
+selector `app.kubernetes.io/name=payment-request-to-pay-service`) ALLOWs only
+`cluster.local/ns/istio-ingress/sa/istio-ingressgateway` on port 8080, and only `POST /open-finance/v1/par`,
+`GET /open-finance/v1/payment-consents/{*}` and `POST /open-finance/v1/payment-consents/{*}/accept|reject`
+(contract `contracts/mesh-contract.yaml`, edges from the gateway). 8081 is open only to
+`cluster.local/ns/observability/sa/prometheus` (`/actuator/prometheus`, `/actuator/health`). This answers the
+forwarded-header finding: the DPoP `htu` check builds the request URL from `X-Forwarded-Proto/Host/Port`
+(`server.forward-headers-strategy: framework`), and no caller other than the gateway can reach 8080 to forge them.
+The gateway sets those three headers and removes `forwarded` and `x-forwarded-prefix` on every RtP route
+(`deploy/kustomize/base/generated/ingress-routing.yaml`, routes `rtp-cutover-r1` to `r4`) and trusts no proxy
+in front of it (`deploy/istio/helm/gateway.values.yaml`, `numTrustedProxies: 0`). Gateway principal: the earlier
+draft named `istio-system/istio-ingressgateway-service-account` (mesh 294256a, namespace `banking` only); 4bf3906
+uses `istio-ingress/istio-ingressgateway`, which matches the rows above.
+
+**B. Native sidecars, mesh-wide.** `deploy/istio/helm/istiod.values.yaml` sets `ENABLE_NATIVE_SIDECARS: "true"`
+(test `tests/sidecar-lifecycle.test.mjs` forbids an environment override to `false`). The proxy starts before and
+stops after the application container. Chart choices that follow: the Deployment carries **no**
+`terminationDrainDuration` annotation (dropped; `terminationGracePeriodSeconds: 65` still bounds preStop 10 s plus
+the 40 s Spring shutdown phase). The Flyway migration Job runs **without** a sidecar
+(`sidecar.istio.io/inject: "false"`, the payments model; mesh d2ccacc): it talks only to Aurora, outside the
+mesh, and carries its own `app.kubernetes.io/component: db-migration`, which no meshed workload shares (the
+mesh refuses a meshed workload that shares a sidecar-less Job's component). The earlier `migration.istioSidecar`
+value is gone.
+
+**C. Still requested from the mesh team.** Egress under `REGISTRY_ONLY` for the service account: Aurora writer
+and reader on 5432 (TLS, `sslmode=verify-full`), MSK IAM brokers on 9098 and regional STS on 443 for IRSA. The
+contract lists `datastores: [aurora-postgresql, msk]` for this workload; confirm the rendered ServiceEntries and
+NetworkPolicies cover the migration Job pod. It carries `app.kubernetes.io/name=payment-request-to-pay-service`
+like the service pods and `app.kubernetes.io/component=db-migration` (service pods: `service`), so keep the 5432
+rule keyed on the name label, not the component. The Job gets no policy exemption.
+
+**D. Observability.** The PodMonitor `fintechbankx-services` scrapes Istio's merged metrics on 15020 from namespace
+`observability`; the pod label `fintechbankx.io/service-id: svc-pay-request-to-pay` selects the pods (the Job pod does
+not carry it).
+
+**E. NetworkPolicy.** The chart renders none by default (`networkPolicy.enabled: false`); the mesh repo owns the
+namespace policy. If the chart's opt-in policy is ever used, it admits namespaces only, never a CIDR.
+
+Cross-repository order (each step waits for the previous one to merge):
+
+1. ADR-030 accepted and this PR merged.
+2. openapi-catalog mirror of the spec, version 1.0.0.
+3. asyncapi-catalog: status publishes; drop the dual-publish note.
+4. enterprise-architecture: LP-10 note.
+5. event streaming: topics and the MSK IAM policy.
+6. service mesh: mesh contract `datastores` and the gateway routes.
+7. Cut-over (section 3).
+
+## 3. Cutover plan
+
+Gateway rules, evaluated in this order in every phase (regular expressions are anchored; no prefix matches):
+
+| Rule | Match | Destination |
+|---|---|---|
+| R1 follow-ups to this service | `GET ^/open-finance/v1/payment-consents/CONS-RTP2-[0-9a-f-]{36}$`, `POST ^/open-finance/v1/payment-consents/CONS-RTP2-[0-9a-f-]{36}/(accept\|reject)$` | this service, **always**, including after a rollback (it alone holds those requests) |
+| R2 follow-ups to the monolith | `GET` / `POST` on the same three paths with any other id | monolith |
+| R3 create | `POST ^/open-finance/v1/par$` with the token's `azp` in `rtp-cutover-cohort` | this service |
+| R4 create, everyone else | `POST ^/open-finance/v1/par$` | monolith |
+
+Phases move only R3's cohort. A TPP is in one cohort at a time, so its create retries (same `X-Idempotency-Key`) reach
+one backend; move a TPP only after telling it that keys sent before the move are not replayed by the other backend.
+
+| Step | Action | Rollback | Rollback trigger (any one, over 15 minutes) |
+|---|---|---|---|
+| 1 | Deploy dark with `OUTBOX_RELAY_ENABLED=false` (DBA bootstrap and migrations per the platform runbook); smoke test with a test TPP: readiness UP, create / read / accept / reject over R1 and R3 | uninstall the chart; drop the schema | smoke test fails |
+| 2 | Apply R1 to R4 with an empty cohort (no TPP traffic moves); check R2/R4 still reach the monolith | remove R1 to R4 | any 404 on the four paths that did not occur before |
+| 3 | Canary: add one pilot TPP client to `rtp-cutover-cohort`; after 48 h clean, add TPPs in batches to about 10 %, then 50 %, then all, 48 h clean at each | remove every TPP from the cohort (R3 empty); R1 keeps serving `CONS-RTP2-` requests here | 5xx rate on the four paths above 1 %; p99 above 1 s; 404 rate on `/payment-consents/*` above its pre-cutover baseline (a misrouted follow-up); any idempotent-replay miss (the same TPP and `X-Idempotency-Key` hash seen by both backends within 24 h, gateway access log); 401 `invalid_dpop_proof` or 403 above 5 % of a TPP's calls (TPP not ready: remove that TPP only) |
+| 4 | Soak: all TPPs in the cohort for **two weeks** at 100 % with every trigger clean; relay still off | as step 3 | as step 3 |
+| 5 | After the soak and once the payments owner has answered ADR-030 open question 1: tag the monolith (`rtp-extract-pre-cutover`), then `OUTBOX_RELAY_ENABLED=true`; events written since step 3 are relayed in order. Watch `outbox_pending_events` drain | relay off; unsent events wait in the outbox (published events cannot be recalled) | the platform alert `OutboxEventsParked` fires for this service; `outbox_parked_rows` above 0; `outbox_oldest_pending_age_seconds` above 300 for 10 minutes; `outbox_relay_consecutive_failed_runs` above 5 |
+| 6 | Remove the `requesttopay` package and controller from the monolith (follow-up PR in enterprise-loan-management-system); then delete R2 and R4 | revert that PR from the tag `rtp-extract-pre-cutover` and restore R2/R4 | monolith build or tests fail |
+
+### Rollback during the canary and soak (steps 3 and 4)
+
+The relay is off for the whole window, so no consumer learns of a pay request that a rollback would strand.
+
+1. Empty `rtp-cutover-cohort`: new creates go to the monolith (R4).
+2. Keep R1: follow-up calls for `CONS-RTP2-` ids keep reaching this service, which still serves them; R2 keeps
+   monolith ids on the monolith. There is no data to move back: the monolith never persisted pay requests.
+3. Re-run the smoke test on the monolith path; publish the incident and corrective actions within 24 h.
+
+What a rollback leaves behind: pay requests created here stay here until they are decided or abandoned; their
+outbox rows stay unsent until the relay is enabled (on a retried cut-over) or are discarded with the consumers'
+owners' agreement.
+
+## 4. Observability gate
+
+1. Traces: `x-fapi-interaction-id` propagated from the gateway through the service to the outbox row
+   (`correlationId`) and the Kafka record (`traceparent`).
+2. Logs in the central sink; no PSU reference, creditor name or amount in labels or attributes.
+3. Metrics baseline before step 3: request rate, 4xx/5xx and p99 per path; gateway 404 rate on the four paths.
+4. Alerts. This chart ships no alert rules. Parked events are covered by the platform alert `OutboxEventsParked`
+   (any increase of `outbox_parked_events_total` over 15 minutes, per `exception`, severity warning, routed by
+   squad; `exception` is the payload error class or `OperatorPark`). The platform outbox rules also cover a
+   stalled relay (`OutboxRelayStalled`, oldest pending event above 900 s) and send failures
+   (`OutboxSendFailures`). Every meter carries the common tags `service=svc-pay-request-to-pay`,
+   `app=payment-request-to-pay-service` (service account) and `squad=payments` (release namespace); the chart sets
+   the last two through `METRICS_TAG_APP` and `METRICS_TAG_SQUAD` (recurring-mandates 2ad4e7f).
+   Service-specific asks beyond those, for the observability team:
+   - `outbox_parked_rows` above 0 (the authoritative signal: the gauge is read from the table, while the counter is
+     best-effort, see section 5)
+   - `outbox_oldest_pending_age_seconds` above 300 for 10 minutes (stricter than the platform's 900 s; only
+     meaningful with the relay enabled)
+   - `outbox_relay_consecutive_failed_runs` above 5
+   - 5xx, p99, 404 and idempotent-replay-miss triggers of section 3
+
+## 5. Parked outbox events
+
+Policy: ADR-021 decision 4. There is no attempt cap and no time-based parking.
+
+| Class | Errors | What the relay does | Signal |
+|---|---|---|---|
+| Payload | `RecordTooLargeException`, `SerializationException`, `InvalidTopicException` | parks the row at once (`park_reason` = `payload error (relay)`), continues with other pay requests; that pay request's later events wait | `outbox_parked_events_total{exception="<class>"}` increases; `outbox_parked_rows` above 0 |
+| Everything else | broker timeouts and other retriable errors, `UnknownTopicOrPartitionException` (topic missing), the relay's send timeout, `SaslAuthenticationException`, `TopicAuthorizationException`, producer construction, anything unclassified | never parks: stops the run without marking any row, backs off 1 s doubling to 60 s, resumes by itself once the cause is fixed | `outbox_send_failures_total{exception="<class>"}`, `outbox_relay_consecutive_failed_runs`, `outbox_oldest_pending_age_seconds` |
+
+Find parked rows:
+
+```sql
+SELECT event_id, created_seq, topic, aggregate_id, attempts, park_reason, last_error, parked_at
+FROM sc_pay_request_to_pay.outbox_event
+WHERE status = 'PARKED'
+ORDER BY created_seq;
+```
+
+Replay after fixing the cause (as the schema owner):
+
+```sql
+UPDATE sc_pay_request_to_pay.outbox_event
+SET status = 'PENDING', parked_at = NULL, park_reason = NULL, park_counted = false, attempts = 0, last_error = NULL
+WHERE event_id = '<event id>';
+```
+
+The replayed row goes out on the next run, followed by its pay request's waiting events in `created_seq` order. To
+discard a parked event instead (only with the consumers' owners' agreement), delete the row; the later events then
+flow. Consumers de-duplicate on `eventId`.
+
+**Operator park** (the only way a row that is not a payload error gets parked, for example a head row blocking the
+queue while a fix is prepared). The reason is mandatory: the check constraint `ck_outbox_parked` refuses a park
+without `parked_at` and `park_reason`.
+
+```sql
+UPDATE sc_pay_request_to_pay.outbox_event
+SET status = 'PARKED', parked_at = now(), park_reason = 'operator: <ticket> <why>'
+WHERE event_id = '<event id>';
+```
+
+The relay counts each operator park once on its next run (`outbox_parked_events_total{exception="OperatorPark"}`,
+column `park_counted`, V4). Its pay request's later events wait until it is replayed as above.
+
+Counting is best-effort: the relay marks `park_counted` in its batch transaction and increments the counter after
+that commits, so a crash in between loses one increment rather than counting a park twice, and the counter restarts
+at zero with the process. Decide what is parked from the gauge `outbox_parked_rows` (read from the table) or the
+query above, never from the counter.
+
+Evidence retention: published outbox rows are purged after 7 days (`requesttopay.outbox.retention: P7D`). Export
+the rows behind any incident (event ids, `park_reason`, `last_error`) to the incident record before then.
+
+## 6. Acceptance checklist
+
+No box is ticked without a CI run linked in section 7. Local runs are noted but do not tick a box.
+
+- [ ] Service builds and tests standalone (`./gradlew check` with PostgreSQL integration tests). Local only so far; CI run: to link
+- [ ] Own schema and migrations; Hibernate validates the entities at startup. Local IT only; CI run: to link
+- [ ] Events written through a transactional outbox with one active relay and no transaction across sends; payload errors parked and their pay request held back; every other error stops and backs off (ADR-021 decision 4). Local tests only; CI run: to link
+- [ ] Idempotent create (`X-Idempotency-Key`, unique per TPP in the database, concurrent race and expired key tested). Local IT only; CI run: to link
+- [ ] Concurrent accept and reject serialised (row lock and optimistic version); repeated decisions idempotent. Local IT only; CI run: to link
+- [ ] Token audience and `payments` scope validated; TPP client required; TPP identity from the token; DPoP with `ath` on every TPP path. Local tests only; CI run: to link
+- [ ] Container image, Helm chart and Terraform checked in CI (`Deployability` workflow). CI run: to link
+- [ ] OpenAPI aligned with the controller and the oasdiff gate green with the waiver. CI run: to link
+- [ ] ADR-030 accepted (OpenAPI breaking changes against `main`; delete the waiver in the next PR)
+- [ ] Payments owner decision on who may accept (ADR-030 open question 1)
+- [ ] Keycloak audience mapper and `payments` scope in place
+- [ ] Mesh contract `datastores` and gateway routes R1 to R4 in place
+- [ ] Topics created on the platform cluster and MSK IAM policy applied
+- [ ] LP-10 parity run: 0 regressions, accepted differences referenced (run id: ...)
+- [ ] Observability gate passed
+- [ ] Two-week soak at 100 % clean; relay enabled after it
+- [ ] Monolith tag `rtp-extract-pre-cutover` created; monolith `requesttopay` package removed
+
+## 7. Evidence links
+
+- PR links: this repository's extraction PR; catalog, enterprise-architecture, event-streaming and mesh PRs of section 2 (to add)
+- Pipeline runs: (to add; none linked yet)
+- Parity run: LP-10 `<run>-<sha7>` (to add)
+- Backfill and verification reports: not applicable (no monolith data)
+- Shadow diff report: not applicable (cohort canary instead)
+- Dashboard snapshots: (to add per canary step)
+- Incident / rollback references: (to add)

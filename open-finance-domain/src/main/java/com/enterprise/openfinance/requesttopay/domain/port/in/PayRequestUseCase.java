@@ -10,7 +10,20 @@ public interface PayRequestUseCase {
 
     PayRequestResult getPayRequestStatus(GetPayRequestStatusQuery query);
 
-    PayRequestResult acceptPayRequest(String consentId, String tppId, String paymentId, String interactionId);
+    /**
+     * The requesting TPP reports acceptance with {@code paymentId}. Repeating it with the same
+     * paymentId returns the current state and publishes nothing.
+     *
+     * @param reason optional free text, carried in the event
+     */
+    PayRequestResult acceptPayRequest(String consentId, String tppId, String paymentId, String reason,
+                                      String interactionId);
 
-    PayRequestResult rejectPayRequest(String consentId, String tppId, String interactionId);
+    /**
+     * The requesting TPP reports that the debtor declined. Repeating it returns the current
+     * state and publishes nothing.
+     *
+     * @param reason optional free text, carried in the event
+     */
+    PayRequestResult rejectPayRequest(String consentId, String tppId, String reason, String interactionId);
 }

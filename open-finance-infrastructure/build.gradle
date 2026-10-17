@@ -28,33 +28,38 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter'
     implementation 'com.fasterxml.jackson.core:jackson-databind'
-    
-    // Persistence and Cache added for Phase 2
+
+    // Persistence: own schema sc_pay_request_to_pay, Flyway migrations in src/main/resources/db/migration
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-    implementation 'org.postgresql:postgresql'
-    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
-    
-    // Kafka for Phase 3
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    runtimeOnly 'org.postgresql:postgresql'
+
+    // Transactional outbox relay to Kafka (evt.pay.rtp.v1, one topic per aggregate)
     implementation 'org.springframework.kafka:spring-kafka'
-    
-    // Security for DPoP and FAPI Phase 4
+    // Amazon MSK IAM authentication (SASL AWS_MSK_IAM), used by the kafka-msk profile.
+    runtimeOnly('software.amazon.msk:aws-msk-iam-auth:2.2.0') {
+        exclude group: 'commons-logging', module: 'commons-logging'
+    }
+
+    // OAuth2 resource server, required DPoP and FAPI headers
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
     implementation 'com.nimbusds:nimbus-jose-jwt'
     implementation 'org.springframework.boot:spring-boot-starter-aop'
 
-    // Observability (Logging & Tracing)
+    // Observability (logging, metrics, tracing)
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'io.micrometer:micrometer-core'
+    testImplementation 'io.micrometer:micrometer-registry-prometheus'
     implementation 'net.logstash.logback:logstash-logback-encoder:7.4'
-    implementation 'io.micrometer:micrometer-tracing-bridge-brave'
-    implementation 'io.zipkin.reporter2:zipkin-reporter-brave'
-
+    implementation 'io.micrometer:micrometer-tracing-bridge-otel'
+    implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core'
     testImplementation 'org.mockito:mockito-core'
-    testImplementation 'com.github.tomakehurst:wiremock-jre8:2.35.0'
+    testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.1'
 }
 
 jacoco {

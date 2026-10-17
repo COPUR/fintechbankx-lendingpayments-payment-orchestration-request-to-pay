@@ -31,16 +31,62 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          gradle --no-daemon clean assemble -x test
+          ./gradlew --no-daemon clean assemble -x test
 
   test:
     name: ci/test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: db_pay_request_to_pay_test
+          POSTGRES_USER: payment_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U payment_test -d db_pay_request_to_pay_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # open-finance-bootstrap integration tests run Flyway and the full service against this
+      # database. With CI=true (set by GitHub Actions) they fail instead of skipping without it.
+      TEST_DB_URL: jdbc:postgresql://localhost:5432/db_pay_request_to_pay_test
+      TEST_DB_USERNAME: payment_test
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Guardrail - production change must come with a test change (ADR-029)
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          NO_BEHAVIOUR_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'no-behaviour-change') }}
+        run: |
+          changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          main_changes="$(printf '%s\n' "$changed" | grep -E '(^|/)src/main/' || true)"
+          test_changes="$(printf '%s\n' "$changed" | grep -E '(^|/)src/[A-Za-z]*[Tt]est/' || true)"
+          if [ -z "$main_changes" ]; then
+            echo "No src/main changes; test-first guardrail not applicable."
+            exit 0
+          fi
+          if [ -n "$test_changes" ]; then
+            echo "src/main changes are accompanied by test changes."
+            exit 0
+          fi
+          if [ "$NO_BEHAVIOUR_CHANGE" = "true" ]; then
+            echo "src/main changed without tests; allowed by label no-behaviour-change."
+            exit 0
+          fi
+          echo "This pull request changes src/main without changing any src/*test* sources:"
+          printf '%s\n' "$main_changes"
+          echo "Add the failing test that drove the change, or label the PR no-behaviour-change."
+          exit 1
 
       - name: Set up Java 23
         uses: actions/setup-java@v4
@@ -54,7 +100,7 @@ jobs:
           node-version: '22'
 
       - name: Run tests and coverage gates
-        run: gradle --no-daemon clean check
+        run: ./gradlew --no-daemon clean check
 
       - name: Assert test execution produced reports
         shell: bash
@@ -88,8 +134,15 @@ jobs:
         shell: bash
         run: |
           tmpdir="$(mktemp -d)"
-          curl -sSfL https://github.com/oasdiff/oasdiff/releases/download/v1.12.1/oasdiff_1.12.1_linux_amd64.tar.gz \
-            | tar -xz -C "$tmpdir"
+          # Pick the asset by runner architecture and check it against the release's sha256 before extracting.
+          case "$(uname -m)" in
+            x86_64) oasdiff_arch=amd64; oasdiff_sha=85514a6044d9cce53816b3558b17be4f784e481e43bf345b1029a6ccc5c0e439 ;;
+            aarch64|arm64) oasdiff_arch=arm64; oasdiff_sha=eff7c6d6d361fc29085925f6871d8b41406baadede6b87a4a055a2b640ac8a05 ;;
+            *) echo "unsupported runner architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSfL -o "$tmpdir/oasdiff.tar.gz" "https://github.com/oasdiff/oasdiff/releases/download/v1.12.1/oasdiff_1.12.1_linux_${oasdiff_arch}.tar.gz"
+          echo "${oasdiff_sha}  $tmpdir/oasdiff.tar.gz" | sha256sum -c -
+          tar -xz -C "$tmpdir" -f "$tmpdir/oasdiff.tar.gz"
           sudo install "$tmpdir/oasdiff" /usr/local/bin/oasdiff
           rm -rf "$tmpdir"
 
@@ -100,6 +153,44 @@ jobs:
       - name: FAPI/DPoP contract guard
         if: ${{ hashFiles('api/openapi/*.yaml') != '' }}
         run: ./scripts/ci/fapi-dpop-guard.sh
+
+      # Top-level specs only: api/asyncapi/common/ holds shared fragments, not AsyncAPI documents.
+      - name: AsyncAPI contract validation
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/.npm
+        shell: bash
+        run: |
+          for spec in api/asyncapi/*.yaml; do
+            npx -y @asyncapi/cli@2.13.0 validate "$spec"
+          done
+
+      # The gate scripts are copies of the asyncapi catalog at 44837cc, unchanged (README, "AsyncAPI gate").
+      # Any edit to a copy fails here: re-copy from the catalog and update these hashes and the README together.
+      - name: AsyncAPI gate scripts match the catalog copy
+        shell: bash
+        run: |
+          sha256sum --check --strict <<'EOF'
+          de255737fe6b54ffbadce8e030e18eec48d0137e0abd43c790fe201a10015eb1  scripts/ci/asyncapi-breaking.mjs
+          5b39d588673c5f7ab55fcfa548fffd70b96ab9b11ea82bd2b61468dadb430c77  scripts/ci/asyncapi-breaking.sh
+          212df6ca092e1ed5519664d7848c9de5fdb5d137f34faa3d31a25e3fe29b3847  scripts/ci/lib/asyncapi-model.mjs
+          EOF
+
+      # ADR-019 section 5 provider gate, the equivalent of cicd-templates 4129ceb's contract-checks
+      # asyncapi job until this repository moves to the shared workflows: the catalog's breaking-change
+      # rules (scripts copied unchanged from the asyncapi catalog at 44837cc, one topic per aggregate)
+      # against the merge base of origin/main. Findings are waived only in
+      # api/asyncapi/<spec-name>.accepted-breaking.txt (CODEOWNERS: API owner review).
+      - name: AsyncAPI breaking-change check
+        if: ${{ hashFiles('api/asyncapi/*.yaml') != '' }}
+        env:
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/.npm
+          ASYNCAPI_DIR: api/asyncapi
+          BASE_REF: origin/main
+        shell: bash
+        run: |
+          npm ci --prefix scripts/ci --ignore-scripts --no-audit --no-fund
+          bash scripts/ci/asyncapi-breaking.sh
 
       - name: Guardrail - disallow generic map request payloads
         shell: bash
@@ -125,8 +216,15 @@ jobs:
         shell: bash
         run: |
           tmpdir="$(mktemp -d)"
-          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
-            | tar -xz -C "$tmpdir"
+          # Pick the asset by runner architecture and check it against the release's sha256 before extracting.
+          case "$(uname -m)" in
+            x86_64) gitleaks_arch=x64; gitleaks_sha=9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c ;;
+            aarch64|arm64) gitleaks_arch=arm64; gitleaks_sha=5f2edbe1f49f7b920f9e06e90759947d3c5dfc16f752fb93aaafc17e9d14cf07 ;;
+            *) echo "unsupported runner architecture $(uname -m)"; exit 1 ;;
+          esac
+          curl -sSfL -o "$tmpdir/gitleaks.tar.gz" "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_${gitleaks_arch}.tar.gz"
+          echo "${gitleaks_sha}  $tmpdir/gitleaks.tar.gz" | sha256sum -c -
+          tar -xz -C "$tmpdir" -f "$tmpdir/gitleaks.tar.gz"
           sudo install "$tmpdir/gitleaks" /usr/local/bin/gitleaks
           rm -rf "$tmpdir"
 

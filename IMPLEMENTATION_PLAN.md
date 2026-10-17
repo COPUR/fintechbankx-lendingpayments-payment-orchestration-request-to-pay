@@ -1,3 +1,5 @@
+> **Superseded** (2026-10-08): historical plan; the current design, endpoints (`/open-finance/v1`, DPoP required) and run instructions are in [README.md](README.md).
+
 **Phase 1: Pure Domain Modeling (Hexagonal Architecture Guardrails)**
 The Request to Pay (RtP) domain must be framework-independent, with no JPA annotations leaking into the core business logic. 
 

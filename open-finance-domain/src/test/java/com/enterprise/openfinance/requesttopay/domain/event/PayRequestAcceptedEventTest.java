@@ -20,6 +20,8 @@ class PayRequestAcceptedEventTest {
                 "AED",
                 "Utilities Co",
                 "PSU-001",
+                "TPP-001",
+                null,
                 occurredOn
         );
 
@@ -30,6 +32,8 @@ class PayRequestAcceptedEventTest {
         assertThat(event.currency()).isEqualTo("AED");
         assertThat(event.creditorName()).isEqualTo("Utilities Co");
         assertThat(event.debtorId()).isEqualTo("PSU-001");
+        assertThat(event.actorClientId()).isEqualTo("TPP-001");
+        assertThat(event.reason()).isNull();
         assertThat(event.occurredOn()).isEqualTo(occurredOn);
         assertThat(event.version()).isEqualTo(1);
     }

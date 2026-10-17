@@ -13,7 +13,7 @@ public record PayRequestCreatedEvent(
         String debtorId,
         Instant occurredOn,
         int version
-) {
+) implements PayRequestDomainEvent {
     public PayRequestCreatedEvent(
             String aggregateId,
             String creditorName,

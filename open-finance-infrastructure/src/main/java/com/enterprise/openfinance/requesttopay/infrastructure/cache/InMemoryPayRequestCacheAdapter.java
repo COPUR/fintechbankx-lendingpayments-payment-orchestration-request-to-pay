@@ -2,13 +2,13 @@ package com.enterprise.openfinance.requesttopay.infrastructure.cache;
 
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.port.out.PayRequestCachePort;
-import org.springframework.stereotype.Component;
+
 
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Component
+
 public class InMemoryPayRequestCacheAdapter implements PayRequestCachePort {
 
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();

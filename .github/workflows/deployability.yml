@@ -1,0 +1,71 @@
+name: Deployability
+
+# Proves every change still produces a runnable image and valid deployment
+# manifests. Nothing is pushed or applied from here.
+
+on:
+  pull_request:
+    branches: [main, dev, staging]
+  push:
+    branches: [main, dev, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  container:
+    name: deploy/container-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build --tag payment-request-to-pay-service:${{ github.sha }} .
+      - name: Image runs as non-root
+        run: |
+          user="$(docker image inspect --format '{{.Config.User}}' payment-request-to-pay-service:${{ github.sha }})"
+          echo "image user: $user"
+          test "$user" = "10001:10001"
+
+  helm:
+    name: deploy/helm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: Vendored platform guard
+        run: |
+          # Source: COPUR/fintechbankx-platform-delivery-iac-cicd-templates,
+          # charts/fintechbankx-service/templates/_helpers.tpl at commit 73e1881 (header-less copy in
+          # templates/_fbx_helpers.tpl); scripts/ci/verify-vendored-guard.sh is the same commit's script.
+          scripts/ci/verify-vendored-guard.sh deploy/helm/payment-request-to-pay-service 4f2cdfe056f5afce0297f699c8b66cb80dc42e8e311759bf4a973f8a15b28b2d
+      - name: Lint and render chart
+        shell: bash
+        run: bash scripts/ci/chart-render-probes.sh
+
+  terraform:
+    name: deploy/terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  asyncapi:
+    name: deploy/asyncapi-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate provider event contract
+        run: for spec in api/asyncapi/*.yaml; do npx -y @asyncapi/cli@2.13.0 validate "$spec"; done

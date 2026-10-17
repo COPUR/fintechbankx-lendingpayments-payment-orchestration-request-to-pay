@@ -1,18 +1,33 @@
 package com.enterprise.openfinance.requesttopay.infrastructure.rest;
 
+import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.requesttopay.infrastructure.security.DPoPValidationException;
 import com.enterprise.openfinance.requesttopay.infrastructure.rest.dto.PayRequestErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import jakarta.validation.ConstraintViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice(basePackages = "com.enterprise.openfinance.requesttopay.infrastructure.rest")
 public class PayRequestExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(PayRequestExceptionHandler.class);
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<PayRequestErrorResponse> handleNotFound(ResourceNotFoundException exception,
@@ -28,11 +43,69 @@ public class PayRequestExceptionHandler {
                 .body(PayRequestErrorResponse.of("REQUEST_FINALIZED", exception.getMessage(), interactionId(request)));
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, IllegalStateException.class})
-    public ResponseEntity<PayRequestErrorResponse> handleInvalidRequest(RuntimeException exception,
+    /**
+     * One 404 body for an unknown pay request and another TPP's (ADR-025 item 5); the reason
+     * goes to the log only.
+     */
+    @ExceptionHandler(PayRequestNotFoundException.class)
+    public ResponseEntity<PayRequestErrorResponse> handlePayRequestNotFound(PayRequestNotFoundException exception,
+                                                                           HttpServletRequest request) {
+        String interactionId = interactionId(request);
+        log.info("Pay request refused: reason={} interactionId={}", exception.reason(), interactionId);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(PayRequestErrorResponse.of("NOT_FOUND", PayRequestNotFoundException.MESSAGE, interactionId));
+    }
+
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleForbidden(AccessDeniedException exception,
+                                                                   HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(PayRequestErrorResponse.of("FORBIDDEN", "Not allowed for this client", interactionId(request)));
+    }
+
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleIdempotencyConflict(IdempotencyKeyConflictException exception,
+                                                                             HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(PayRequestErrorResponse.of("IDEMPOTENCY_KEY_REUSED", exception.getMessage(), interactionId(request)));
+    }
+
+    @ExceptionHandler({OptimisticLockingFailureException.class, PessimisticLockingFailureException.class})
+    public ResponseEntity<PayRequestErrorResponse> handleConcurrentUpdate(RuntimeException exception,
+                                                                          HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(PayRequestErrorResponse.of("CONCURRENT_UPDATE",
+                        "The pay request was changed concurrently; retry", interactionId(request)));
+    }
+
+    @ExceptionHandler({MethodArgumentNotValidException.class, HandlerMethodValidationException.class,
+            ConstraintViolationException.class, MissingRequestHeaderException.class,
+            HttpMessageNotReadableException.class})
+    public ResponseEntity<PayRequestErrorResponse> handleMalformedRequest(Exception exception,
+                                                                          HttpServletRequest request) {
+        return ResponseEntity.badRequest()
+                .body(PayRequestErrorResponse.of("INVALID_REQUEST", "Request is missing or has invalid fields",
+                        interactionId(request)));
+    }
+
+    /** Rejected input (domain and value-object validation). The only 400 for a plain JDK exception. */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleInvalidRequest(IllegalArgumentException exception,
                                                                         HttpServletRequest request) {
         return ResponseEntity.badRequest()
                 .body(PayRequestErrorResponse.of("INVALID_REQUEST", exception.getMessage(), interactionId(request)));
+    }
+
+    /**
+     * A broken invariant inside the service is not the caller's fault: 500 with a fixed
+     * message, so internal state (ids, SQL outcomes) never reaches the TPP.
+     */
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<PayRequestErrorResponse> handleIllegalState(IllegalStateException exception,
+                                                                      HttpServletRequest request) {
+        log.error("Internal error on {}", request.getRequestURI(), exception);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(PayRequestErrorResponse.of("INTERNAL_ERROR", "Unexpected error occurred", interactionId(request)));
     }
 
     @ExceptionHandler(DPoPValidationException.class)
@@ -60,6 +133,14 @@ public class PayRequestExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<PayRequestErrorResponse> handleUnexpected(Exception exception,
                                                                     HttpServletRequest request) {
+        if (exception instanceof ErrorResponse framework) {
+            // Spring MVC's own 4xx (unsupported method or media type, unknown path, ...) keep their status.
+            HttpStatus status = HttpStatus.resolve(framework.getStatusCode().value());
+            return ResponseEntity.status(framework.getStatusCode())
+                    .headers(framework.getHeaders())
+                    .body(PayRequestErrorResponse.of(status != null ? status.name() : "HTTP_ERROR",
+                            framework.getBody().getDetail(), interactionId(request)));
+        }
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(PayRequestErrorResponse.of("INTERNAL_ERROR", "Unexpected error occurred", interactionId(request)));
     }

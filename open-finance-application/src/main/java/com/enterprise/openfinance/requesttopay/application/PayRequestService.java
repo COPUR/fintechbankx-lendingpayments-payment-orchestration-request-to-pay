@@ -1,15 +1,18 @@
 package com.enterprise.openfinance.requesttopay.application;
 
 import com.enterprise.openfinance.requesttopay.domain.command.CreatePayRequestCommand;
-import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestFinalizedException;
+import com.enterprise.openfinance.requesttopay.domain.exception.IdempotencyKeyConflictException;
+import com.enterprise.openfinance.requesttopay.domain.exception.PayRequestNotFoundException;
 import com.enterprise.openfinance.requesttopay.domain.exception.ResourceNotFoundException;
+import com.enterprise.openfinance.requesttopay.domain.model.IdempotencyRecord;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequest;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestResult;
 import com.enterprise.openfinance.requesttopay.domain.model.PayRequestSettings;
-import com.enterprise.openfinance.requesttopay.domain.model.PayRequestStatus;
+import com.enterprise.openfinance.requesttopay.domain.model.valueobject.DecisionBy;
 import com.enterprise.openfinance.requesttopay.domain.port.in.PayRequestUseCase;
 import com.enterprise.openfinance.requesttopay.domain.port.out.PayRequestCachePort;
-import com.enterprise.openfinance.requesttopay.domain.port.out.PayRequestNotificationPort;
+import com.enterprise.openfinance.requesttopay.domain.port.out.PayRequestEventPublisher;
+import com.enterprise.openfinance.requesttopay.domain.port.out.PayRequestIdempotencyPort;
 import com.enterprise.openfinance.requesttopay.domain.port.out.PayRequestRepositoryPort;
 import com.enterprise.openfinance.requesttopay.domain.query.GetPayRequestStatusQuery;
 import org.springframework.stereotype.Service;
@@ -19,26 +22,35 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.function.UnaryOperator;
 
+/**
+ * Request-to-pay use cases. Each command loads the aggregate, calls one
+ * aggregate method, saves it and hands the registered events to the
+ * transactional outbox in the same transaction.
+ */
 @Service
 public class PayRequestService implements PayRequestUseCase {
 
     private final PayRequestRepositoryPort repositoryPort;
     private final PayRequestCachePort cachePort;
-    private final PayRequestNotificationPort notificationPort;
+    private final PayRequestEventPublisher eventPublisher;
+    private final PayRequestIdempotencyPort idempotencyPort;
     private final PayRequestSettings settings;
     private final Clock clock;
     private final Supplier<String> consentIdGenerator;
 
     public PayRequestService(PayRequestRepositoryPort repositoryPort,
                              PayRequestCachePort cachePort,
-                             PayRequestNotificationPort notificationPort,
+                             PayRequestEventPublisher eventPublisher,
+                             PayRequestIdempotencyPort idempotencyPort,
                              PayRequestSettings settings,
                              Clock clock,
                              Supplier<String> consentIdGenerator) {
         this.repositoryPort = repositoryPort;
         this.cachePort = cachePort;
-        this.notificationPort = notificationPort;
+        this.eventPublisher = eventPublisher;
+        this.idempotencyPort = idempotencyPort;
         this.settings = settings;
         this.clock = clock;
         this.consentIdGenerator = consentIdGenerator;
@@ -50,21 +62,18 @@ public class PayRequestService implements PayRequestUseCase {
         Instant now = Instant.now(clock);
         String consentId = consentIdGenerator.get();
 
-        PayRequest request = new PayRequest(
-                consentId,
-                command.tppId(),
-                command.psuId(),
-                command.creditorName(),
-                command.amount(),
-                command.currency(),
-                PayRequestStatus.AWAITING_AUTHORISATION,
-                command.requestedAt(),
-                now,
-                null
-        );
+        if (command.idempotencyKey() != null) {
+            String fingerprint = command.fingerprint();
+            Optional<IdempotencyRecord> earlier = idempotencyPort.reserve(command.tppId(), command.idempotencyKey(),
+                    fingerprint, consentId, now, now.plus(settings.idempotencyTtl()));
+            if (earlier.isPresent()) {
+                return replay(earlier.orElseThrow(), fingerprint);
+            }
+        }
 
-        PayRequest saved = repositoryPort.save(request);
-        notificationPort.notifyPayRequestCreated(saved);
+        PayRequest created = PayRequest.create(consentId, command, now);
+        PayRequest saved = repositoryPort.save(created);
+        eventPublisher.publish(created, created.domainEvents(), command.interactionId());
         return new PayRequestResult(saved, false);
     }
 
@@ -80,7 +89,7 @@ public class PayRequestService implements PayRequestUseCase {
         }
 
         PayRequest request = repositoryPort.findByConsentId(query.consentId())
-                .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
+                .orElseThrow(PayRequestService::notFound);
 
         ensureOwnership(request, query.tppId());
 
@@ -91,37 +100,58 @@ public class PayRequestService implements PayRequestUseCase {
 
     @Override
     @Transactional
-    public PayRequestResult acceptPayRequest(String consentId, String tppId, String paymentId, String interactionId) {
-        PayRequest request = repositoryPort.findByConsentId(consentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
-        ensureOwnership(request, tppId);
-        if (request.isFinalized()) {
-            throw new PayRequestFinalizedException("Pay request already finalized");
-        }
-        PayRequest consumed = request.consume(paymentId, Instant.now(clock));
-        PayRequest saved = repositoryPort.save(consumed);
-        notificationPort.notifyPayRequestFinalized(saved);
-        return new PayRequestResult(saved, false);
+    public PayRequestResult acceptPayRequest(String consentId, String tppId, String paymentId, String reason,
+                                             String interactionId) {
+        DecisionBy decision = new DecisionBy(tppId, reason);
+        return decide(consentId, tppId, interactionId,
+                request -> request.consume(paymentId, decision, Instant.now(clock)));
     }
 
     @Override
     @Transactional
-    public PayRequestResult rejectPayRequest(String consentId, String tppId, String interactionId) {
-        PayRequest request = repositoryPort.findByConsentId(consentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
+    public PayRequestResult rejectPayRequest(String consentId, String tppId, String reason, String interactionId) {
+        DecisionBy decision = new DecisionBy(tppId, reason);
+        return decide(consentId, tppId, interactionId, request -> request.reject(decision, Instant.now(clock)));
+    }
+
+    private PayRequestResult decide(String consentId, String tppId, String interactionId,
+                                    UnaryOperator<PayRequest> decision) {
+        PayRequest request = repositoryPort.findByConsentIdForUpdate(consentId)
+                .orElseThrow(PayRequestService::notFound);
         ensureOwnership(request, tppId);
-        if (request.isFinalized()) {
-            throw new PayRequestFinalizedException("Pay request already finalized");
+
+        PayRequest decided = decision.apply(request);
+        if (decided.domainEvents().isEmpty()) {
+            // A repeated decision with the same outcome: answer with the current state.
+            return new PayRequestResult(decided, false);
         }
-        PayRequest rejected = request.reject(Instant.now(clock));
-        PayRequest saved = repositoryPort.save(rejected);
-        notificationPort.notifyPayRequestFinalized(saved);
-        return new PayRequestResult(saved, false);
+        PayRequest saved = repositoryPort.save(decided);
+        eventPublisher.publish(decided, decided.domainEvents(), interactionId);
+
+        PayRequestResult result = new PayRequestResult(saved, false);
+        // Refresh this replica's cache; other replicas converge within cacheTtl.
+        cachePort.putStatus(cacheKey(consentId, tppId), result, Instant.now(clock).plus(settings.cacheTtl()));
+        return result;
+    }
+
+    private PayRequestResult replay(IdempotencyRecord earlier, String fingerprint) {
+        if (!earlier.matches(fingerprint)) {
+            throw new IdempotencyKeyConflictException(
+                    "Idempotency key was already used with a different request payload");
+        }
+        PayRequest original = repositoryPort.findByConsentId(earlier.consentId())
+                .orElseThrow(() -> new ResourceNotFoundException("Pay request not found"));
+        return PayRequestResult.replayOf(original);
+    }
+
+    /** An unknown id is answered exactly like another TPP's pay request (ADR-025 item 5), so ids cannot be probed. */
+    private static PayRequestNotFoundException notFound() {
+        return new PayRequestNotFoundException(PayRequestNotFoundException.Reason.NOT_FOUND);
     }
 
     private static void ensureOwnership(PayRequest request, String tppId) {
         if (!request.belongsTo(tppId)) {
-            throw new IllegalArgumentException("Pay request participant mismatch");
+            throw new PayRequestNotFoundException(PayRequestNotFoundException.Reason.OTHER_TPP);
         }
     }
 

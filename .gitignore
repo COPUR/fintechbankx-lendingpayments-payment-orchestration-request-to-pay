@@ -4,3 +4,16 @@ build/
 *.iml
 .idea/
 /out/
+# Hexagonal port packages are named "out"; never ignore source directories.
+!**/src/**/out/
+
+# Terraform working files
+**/.terraform/
+**/.terraform.lock.hcl
+# The deploy root pins its provider hashes (platform review round); module copies stay ignored.
+!deploy/terraform/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+
+# AsyncAPI gate dependencies (npm ci --prefix scripts/ci)
+scripts/ci/node_modules/

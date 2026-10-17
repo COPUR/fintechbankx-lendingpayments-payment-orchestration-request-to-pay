@@ -69,7 +69,7 @@ final class PostgresTestDatabase {
     }
 
     static String ownerPassword() {
-        return env("TEST_DB_PASSWORD", "payment_test");
+        return env("TEST_DB_PASSWORD");
     }
 
     /** The schema owner's connection, for set-up and clean-up the runtime role may not do. */
@@ -102,5 +102,11 @@ final class PostgresTestDatabase {
     private static String env(String name, String fallback) {
         String value = System.getenv(name);
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    /** Empty when unset: the CI service container runs with trust authentication. */
+    private static String env(String name) {
+        String value = System.getenv(name);
+        return value == null || value.isBlank() ? "" : value;
     }
 }
